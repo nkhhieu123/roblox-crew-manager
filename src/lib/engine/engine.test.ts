@@ -362,6 +362,15 @@ describe("daily periods (00:00 → 00:00 Vietnam time)", () => {
   const pt2 = (id: string, iso: string, km: number, don: number) => pt(id, iso, km, don);
   const after = Date.parse("2026-11-20T03:00:00Z");
 
+  it("keeps a 24h day for any start hour (e.g. 14:00)", () => {
+    for (const h of [0, 7, 12, 14, 23]) {
+      const pr = dayPeriodAt(Date.parse("2026-11-22T13:50:00Z"), S, h);
+      expect(pr.end - pr.start).toBe(24 * 3600_000);
+      expect(pr.start).toBeLessThanOrEqual(Date.parse("2026-11-22T13:50:00Z"));
+      expect(pr.end).toBeGreaterThan(Date.parse("2026-11-22T13:50:00Z"));
+    }
+  });
+
   it("computes the local day boundaries", () => {
     expect(new Date(day.start).toISOString()).toBe("2026-11-18T17:00:00.000Z");
     expect(new Date(day.end).toISOString()).toBe("2026-11-19T17:00:00.000Z");

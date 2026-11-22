@@ -429,13 +429,16 @@ export function evaluateMemberDaily(
 /** The daily period (local time, starting at `startHour`) that contains `ms`. */
 export function dayPeriodAt(ms: number, settings: Pick<GeneralSettings, "timezone">, startHour = 0): Period {
   const p = localParts(ms, settings.timezone);
+  // local calendar date of the period start: today, or yesterday if today's start hour is still ahead
+  let date = new Date(Date.UTC(p.year, p.month - 1, p.day));
   let start = zonedToUtc(p.year, p.month, p.day, startHour, settings.timezone);
   if (start > ms) {
-    const d = new Date(Date.UTC(p.year, p.month - 1, p.day - 1));
-    start = zonedToUtc(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate(), startHour, settings.timezone);
+    date = new Date(Date.UTC(p.year, p.month - 1, p.day - 1));
+    start = zonedToUtc(date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate(), startHour, settings.timezone);
   }
-  const np = localParts(start + 36 * HOUR, settings.timezone); // safely inside the next local day
-  const end = zonedToUtc(np.year, np.month, np.day, startHour, settings.timezone);
+  // the next local calendar day, same hour
+  const next = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() + 1));
+  const end = zonedToUtc(next.getUTCFullYear(), next.getUTCMonth() + 1, next.getUTCDate(), startHour, settings.timezone);
   return { start, end };
 }
 

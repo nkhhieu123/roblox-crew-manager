@@ -402,7 +402,7 @@ async function saveEvaluation(a: {
   const sup = db().from("evaluations").update({ superseded: true }).eq("superseded", false);
   must(
     a.period.kind === "daily"
-      ? await sup.eq("period_kind", "daily").eq("period_start", a.period.start)
+      ? await sup.eq("period_kind", "daily").lt("period_start", a.period.end).gt("period_end", a.period.start)
       : await sup.eq("period_kind", "rolling").eq("to_snapshot_id", a.snapshotId),
     "Supersede old evaluations",
   );

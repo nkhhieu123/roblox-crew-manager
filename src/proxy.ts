@@ -5,6 +5,8 @@ import { SESSION_COOKIE, verifySession } from "@/lib/auth-token";
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   if (pathname === "/login") return NextResponse.next();
+  // the cron endpoint checks its own secret (CRON_SECRET)
+  if (pathname.startsWith("/api/cron/")) return NextResponse.next();
 
   const session = await verifySession(request.cookies.get(SESSION_COOKIE)?.value);
   if (session) return NextResponse.next();
