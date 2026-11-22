@@ -38,6 +38,7 @@ interface OcrRowDto {
   last_seen_text: string | null;
   needs_review: boolean;
   review_notes: string | null;
+  image_index: number;
   raw: Record<string, unknown>;
 }
 
@@ -51,7 +52,7 @@ interface OcrResponse {
   member_total: number | null;
   columns_visible: string[];
   rows: OcrRowDto[];
-  image_path: string | null;
+  image_paths: (string | null)[];
   error?: string;
 }
 
@@ -71,13 +72,14 @@ interface DraftRow {
   raw: Record<string, unknown> | null;
 }
 
-const MAX_UPLOAD_BYTES = 3.8 * 1024 * 1024;
+/** All images of one scan are sent in one request; Vercel caps a request body at 4.5MB in total. */
+const TOTAL_UPLOAD_BYTES = 4.0 * 1024 * 1024;
 const uid = () => Math.random().toString(36).slice(2, 10);
 const str = (v: unknown) => (v === null || v === undefined ? "" : String(v));
 
 /** Downscale/compress large screenshots so each request stays under Vercel's 4.5MB body limit. */
-async function prepareImage(file: File): Promise<File> {
-  if (file.size <= MAX_UPLOAD_BYTES && file.type !== "image/jpg") return file;
+async function prepareImage(file: File, budget: number): Promise<File> {
+  if (file.size <= budget && file.type !== "image/jpg") return file;
   const bitmap = await createImageBitmap(file);
   let scale = Math.min(1, 2560 / Math.max(bitmap.width, bitmap.height));
   for (let quality = 0.92; ; quality -= 0.08) {
@@ -88,7 +90,7 @@ async function prepareImage(file: File): Promise<File> {
     const blob: Blob = await new Promise((res, rej) =>
       canvas.toBlob((b) => (b ? res(b) : rej(new Error("Không nén được ảnh"))), "image/jpeg", quality),
     );
-    if (blob.size <= MAX_UPLOAD_BYTES || quality < 0.5) {
+    if (blob.size <= budget || quality < 0.5) {
       return new File([blob], file.name.replace(/\.\w+$/, "") + ".jpg", { type: "image/jpeg" });
     }
     if (quality < 0.7) scale *= 0.85;
@@ -289,39 +291,52 @@ export function UploadClient({
       return;
     }
     setScanning(true);
-    for (const item of pending) {
-      const index = images.findIndex((i) => i.id === item.id);
-      setImages((prev) => prev.map((i) => (i.id === item.id ? { ...i, status: "processing", error: undefined } : i)));
-      try {
-        const prepared = await prepareImage(item.file);
-        const fd = new FormData();
-        fd.append("image", prepared);
-        const res = await fetch("/api/ocr", { method: "POST", body: fd });
-        const data = (await res.json()) as OcrResponse;
-        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-        if (!data.is_member_list) toast.warning(`Ảnh ${index + 1}: có vẻ không phải danh sách Members — hãy kiểm tra kỹ.`);
-        mergeRows(data.rows, index);
-        if (data.member_total) setMemberTotal((prev) => Math.max(prev ?? 0, data.member_total!));
-        setModel(data.model);
-        setRawOutputs((prev) => [...prev, { image: index + 1, km_label: data.km_label, donate_label: data.donate_label, columns: data.columns_visible, rows: data.rows.map((r) => r.raw) }]);
-        setLabels((prev) => ({
-          km: prev.km ?? data.km_label,
-          donate: prev.donate ?? data.donate_label,
-          columns: Array.from(new Set([...prev.columns, ...data.columns_visible])),
-        }));
-        if (data.donate_label && /week|tuần|weekly/i.test(data.donate_label)) setDonateType("weekly");
-        if (data.reset_countdown_text) {
-          setCountdownText((prev) => prev || data.reset_countdown_text!);
-          if (data.reset_in_seconds === null) toast.warning(`Không hiểu định dạng đồng hồ reset "${data.reset_countdown_text}" — hãy nhập lại.`);
-        }
-        setImages((prev) =>
-          prev.map((i) => (i.id === item.id ? { ...i, status: "done", imagePath: data.image_path, rowCount: data.rows.length } : i)),
+    const ids = new Set(pending.map((p) => p.id));
+    const indexOf = (id: string) => images.findIndex((i) => i.id === id);
+    setImages((prev) => prev.map((i) => (ids.has(i.id) ? { ...i, status: "processing", error: undefined } : i)));
+    try {
+      // one request for all screenshots → one AI call per upload (saves the daily free quota)
+      const budget = Math.floor(TOTAL_UPLOAD_BYTES / pending.length);
+      const fd = new FormData();
+      for (const item of pending) fd.append("image", await prepareImage(item.file, budget));
+      const res = await fetch("/api/ocr", { method: "POST", body: fd });
+      const data = (await res.json()) as OcrResponse;
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      if (!data.is_member_list) toast.warning("Ảnh có vẻ không phải danh sách Members — hãy kiểm tra kỹ.");
+
+      // merge image by image, in upload order, so overlapping rows are detected
+      pending.forEach((item, k) => {
+        mergeRows(
+          data.rows.filter((r) => r.image_index === k),
+          indexOf(item.id),
         );
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        setImages((prev) => prev.map((i) => (i.id === item.id ? { ...i, status: "error", error: msg } : i)));
-        toast.error(`Ảnh ${index + 1}: ${msg}`);
+      });
+      if (data.member_total) setMemberTotal((prev) => Math.max(prev ?? 0, data.member_total!));
+      setModel(data.model);
+      setRawOutputs((prev) => [...prev, { images: pending.map((p) => indexOf(p.id) + 1), km_label: data.km_label, donate_label: data.donate_label, columns: data.columns_visible, rows: data.rows.map((r) => r.raw) }]);
+      setLabels((prev) => ({
+        km: prev.km ?? data.km_label,
+        donate: prev.donate ?? data.donate_label,
+        columns: Array.from(new Set([...prev.columns, ...data.columns_visible])),
+      }));
+      if (data.donate_label && /week|tuần|weekly/i.test(data.donate_label)) setDonateType("weekly");
+      if (data.reset_countdown_text) {
+        setCountdownText((prev) => prev || data.reset_countdown_text!);
+        if (data.reset_in_seconds === null) toast.warning(`Không hiểu định dạng đồng hồ reset "${data.reset_countdown_text}" — hãy nhập lại.`);
       }
+      setImages((prev) =>
+        prev.map((i) => {
+          const k = pending.findIndex((p) => p.id === i.id);
+          return k < 0
+            ? i
+            : { ...i, status: "done", imagePath: data.image_paths?.[k] ?? null, rowCount: data.rows.filter((r) => r.image_index === k).length };
+        }),
+      );
+      toast.success(`Đã đọc ${pending.length} ảnh (${data.model})`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setImages((prev) => prev.map((i) => (ids.has(i.id) ? { ...i, status: "error", error: msg } : i)));
+      toast.error(msg, { duration: 15000 });
     }
     setScanning(false);
   }

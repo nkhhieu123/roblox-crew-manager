@@ -7,6 +7,7 @@ import { cleanUsername, parseInteger, parseNumber } from "@/lib/engine/parse";
 import { parseCountdown } from "@/lib/engine/week";
 
 const rowSchema = z.object({
+  image_index: z.number().int().describe("1-based number of the screenshot this row was read from (Image 1, Image 2, ...)"),
   username: z.string().nullable().describe("Roblox account username exactly as shown (usually the small '@name' text), without '@'. null if not visible/unreadable."),
   display_name: z.string().nullable().describe("Display name (usually the larger name). null if not visible."),
   level_text: z.string().nullable().describe("Level exactly as shown, e.g. 'Lv. 42' or '42'. null if not visible."),
@@ -36,8 +37,11 @@ const ocrSchema = z.object({
 
 export type OcrOutput = z.infer<typeof ocrSchema>;
 
-const PROMPT = `You are a meticulous OCR engine reading a screenshot of a Roblox crew "Members" list.
-Extract EVERY member row visible in the image, top to bottom.
+const PROMPT = `You are a meticulous OCR engine reading screenshots of a Roblox crew "Members" list.
+You may receive several screenshots (Image 1, Image 2, ...): they are consecutive scrolls of the SAME list and usually overlap.
+Extract EVERY member row visible in EVERY image, image by image, top to bottom, and set image_index for each row.
+Rows that appear in two images must be listed for each image (the system merges them) — read each one independently.
+Header fields (member_total, labels, countdown) describe the whole list: take them from whichever image shows them.
 
 STRICT RULES:
 - Copy text EXACTLY as displayed. Do not translate, correct, round or reformat numbers.
@@ -60,6 +64,8 @@ export interface OcrRow {
   last_seen_text: string | null;
   needs_review: boolean;
   review_notes: string | null;
+  /** 0-based index of the uploaded image the row came from */
+  image_index: number;
   raw: z.infer<typeof rowSchema>;
 }
 
@@ -122,6 +128,7 @@ export function normalizeOcr(out: OcrOutput, model: string): OcrResult {
       last_seen_text: r.last_seen?.trim() || null,
       needs_review: needs,
       review_notes: notes.length ? notes.join("; ") : null,
+      image_index: Math.max(0, (r.image_index ?? 1) - 1),
       raw: r,
     });
   }
@@ -139,23 +146,52 @@ export function normalizeOcr(out: OcrOutput, model: string): OcrResult {
   };
 }
 
-export async function runOcr(image: Uint8Array, mediaType: string): Promise<OcrResult> {
+export interface OcrImage {
+  data: Uint8Array;
+  mediaType: string;
+}
+
+/** Quota / overload errors: try the next model instead of failing (each Gemini model has its own free quota). */
+function isQuotaOrOverload(e: unknown): boolean {
+  const m = (e instanceof Error ? e.message : String(e)).toLowerCase();
+  return /quota|rate.?limit|resource.?exhausted|429|high demand|overloaded|unavailable|503/.test(m);
+}
+
+/** Read all screenshots of one upload in a single model call (one request per upload, not per image). */
+export async function runOcr(images: OcrImage[]): Promise<OcrResult> {
+  const content = [
+    { type: "text" as const, text: PROMPT },
+    ...images.flatMap((img, i) => [
+      { type: "text" as const, text: `Image ${i + 1}:` },
+      { type: "file" as const, mediaType: img.mediaType, data: img.data },
+    ]),
+  ];
+
   // Gemini API key (free tier) takes priority; otherwise go through Vercel AI Gateway
-  const model = env.geminiKey ? `google/${env.geminiModel}` : env.ocrModel;
-  const { output } = await generateText({
-    model: env.geminiKey ? google(env.geminiModel) : env.ocrModel,
-    temperature: 0,
-    maxRetries: 2,
-    output: Output.object({ schema: ocrSchema }),
-    messages: [
-      {
-        role: "user",
-        content: [
-          { type: "text", text: PROMPT },
-          { type: "file", mediaType, data: image },
-        ],
-      },
-    ],
-  });
-  return normalizeOcr(output, model);
+  const candidates = env.geminiKey
+    ? env.geminiModels.map((m) => ({ name: `google/${m}`, model: google(m) }))
+    : [{ name: env.ocrModel, model: env.ocrModel }];
+
+  const errors: string[] = [];
+  for (const c of candidates) {
+    try {
+      const { output } = await generateText({
+        model: c.model,
+        temperature: 0,
+        maxRetries: 0, // retries burn the daily free quota; fall through to the next model instead
+        output: Output.object({ schema: ocrSchema }),
+        messages: [{ role: "user", content }],
+      });
+      return normalizeOcr(output, c.name);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      errors.push(`${c.name}: ${msg.slice(0, 160)}`);
+      if (!isQuotaOrOverload(e)) break;
+    }
+  }
+  throw new Error(
+    errors.every((x) => /quota|exceeded/i.test(x))
+      ? `Tất cả model Gemini đã hết lượt miễn phí hôm nay. Thử lại sau vài giờ hoặc dùng "Nhập thủ công". (${errors.length} model đã thử)`
+      : errors.join(" | "),
+  );
 }

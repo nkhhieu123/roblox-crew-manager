@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { parseNumber, levenshtein } from "./parse";
 import { crossesWeeklyReset, lastWeeklyReset, parseCountdown, resetBetween } from "./week";
 import { evaluateMember } from "./evaluate";
+import { currentRaceWeek, weekContribution } from "./race";
 import { DEFAULT_REQUIREMENT, DEFAULT_SETTINGS, type DataPoint, type RequirementConfig } from "./types";
 
 const S = { ...DEFAULT_SETTINGS, timezone: "Asia/Ho_Chi_Minh", week_reset_weekday: 1, week_reset_hour: 0 };
@@ -316,5 +317,38 @@ describe("countdown-based weekly reset", () => {
     );
     expect(r.km).toEqual({ value: 6000, exact: true, flags: [] });
     expect(r.status).toBe("PASS");
+  });
+});
+
+describe("weekly race", () => {
+  // reset read from screenshot: 2026-11-23T07:33Z
+  const R = "2026-11-23T07:33:00Z";
+  it("finds the current race week from the countdown and rolls it forward", () => {
+    const w1 = currentRaceWeek(Date.parse("2026-11-22T10:00:00Z"), R, S);
+    expect(new Date(w1.end).toISOString()).toBe("2026-11-23T07:33:00.000Z");
+    const w2 = currentRaceWeek(Date.parse("2026-11-25T10:00:00Z"), R, S);
+    expect(new Date(w2.start).toISOString()).toBe("2026-11-23T07:33:00.000Z");
+    const w3 = currentRaceWeek(Date.parse("2026-12-05T10:00:00Z"), R, S);
+    expect(new Date(w3.start).toISOString()).toBe("2026-11-30T07:33:00.000Z");
+  });
+
+  const p = (at: string, km: number | null, don: number | null) => ({ captured_at: at, weekly_km: km, donated: don, donate_type: "cumulative" as const });
+
+  it("resets to 0 when the week rolled over and there is no new screenshot yet", () => {
+    const start = Date.parse(R);
+    const c = weekContribution([p("2026-11-22T04:33:00Z", 844919, 8000)], start);
+    expect(c).toMatchObject({ km: 0, donate: 0, newWeekNoData: true, donatedTotal: 8000 });
+  });
+
+  it("uses this week's KM and donate since the reset", () => {
+    const start = Date.parse(R);
+    const c = weekContribution([p("2026-11-23T05:00:00Z", 900000, 8000), p("2026-11-24T05:00:00Z", 12000, 8500)], start);
+    expect(c).toMatchObject({ km: 12000, donate: 500, donateApprox: false, newWeekNoData: false });
+  });
+
+  it("marks donate approximate when the reference is far before the reset, unknown when none", () => {
+    const start = Date.parse(R);
+    expect(weekContribution([p("2026-11-22T04:33:00Z", 1, 8000), p("2026-11-24T05:00:00Z", 2, 9000)], start).donateApprox).toBe(true);
+    expect(weekContribution([p("2026-11-24T05:00:00Z", 2, 9000)], start).donate).toBeNull();
   });
 });

@@ -33,6 +33,10 @@ export interface MemberListRow {
   /** latest values read from screenshots: KM this week and total Donated */
   current_km: number | null;
   current_donated: number | null;
+  donate_approx: boolean;
+  donated_total: number | null;
+  /** no screenshot since the weekly reset yet → race values are 0 */
+  new_week_no_data: boolean;
 }
 
 type SortKey = "username" | "km" | "donate" | "violations" | "last" | "level" | "cur_km" | "cur_donated";
@@ -145,7 +149,7 @@ export function MembersTable({ rows }: { rows: MemberListRow[] }) {
           setDir(Number(d) as 1 | -1);
         }} className="ml-auto">
           <option value="cur_km:-1">KM tuần này cao nhất</option>
-          <option value="cur_donated:-1">Đã donate nhiều nhất</option>
+          <option value="cur_donated:-1">Donate tuần này nhiều nhất</option>
           <option value="km:-1">KM tăng nhiều nhất</option>
           <option value="km:1">KM tăng ít nhất</option>
           <option value="donate:-1">Donate tăng nhiều nhất</option>
@@ -165,7 +169,7 @@ export function MembersTable({ rows }: { rows: MemberListRow[] }) {
                 <th className="px-4 py-2.5 text-left font-medium">Role</th>
                 <Th k="level" right active={sort === "level"} onSort={toggleSort}>Level</Th>
                 <Th k="cur_km" right active={sort === "cur_km"} onSort={toggleSort}>KM tuần này</Th>
-                <Th k="cur_donated" right active={sort === "cur_donated"} onSort={toggleSort}>Đã donate</Th>
+                <Th k="cur_donated" right active={sort === "cur_donated"} onSort={toggleSort}>Donate tuần này</Th>
                 <Th k="km" right active={sort === "km"} onSort={toggleSort}>KM tăng</Th>
                 <Th k="donate" right active={sort === "donate"} onSort={toggleSort}>Donate tăng</Th>
                 <th className="px-4 py-2.5 text-left font-medium">Trạng thái</th>
@@ -188,8 +192,24 @@ export function MembersTable({ rows }: { rows: MemberListRow[] }) {
                   </td>
                   <td className="px-4 py-2.5 text-xs">{r.role ?? "—"}</td>
                   <td className="px-4 py-2.5 text-right tabular">{fmtNum(r.level)}</td>
-                  <td className="px-4 py-2.5 text-right tabular font-medium">{fmtNum(r.current_km)}</td>
-                  <td className="px-4 py-2.5 text-right tabular font-medium">{fmtNum(r.current_donated)}</td>
+                  <td className="px-4 py-2.5 text-right tabular font-medium">
+                    {fmtNum(r.current_km)}
+                    {r.new_week_no_data && <div className="text-[10px] font-normal text-muted-foreground">tuần mới – chờ ảnh</div>}
+                  </td>
+                  <td
+                    className="px-4 py-2.5 text-right tabular font-medium"
+                    title={r.donated_total !== null ? `Tổng Donated tích lũy: ${fmtNum(r.donated_total)}` : undefined}
+                  >
+                    {r.current_donated === null ? (
+                      <span className="text-xs font-normal text-muted-foreground" title="Chưa có ảnh trước mốc reset để làm mốc">Chưa có mốc</span>
+                    ) : (
+                      <>
+                        {r.donate_approx ? "≈ " : ""}
+                        {fmtNum(r.current_donated)}
+                      </>
+                    )}
+                    {r.donated_total !== null && <div className="text-[10px] font-normal text-muted-foreground">tổng {fmtNum(r.donated_total)}</div>}
+                  </td>
                   <td className="px-4 py-2.5 text-right tabular">{r.status ? fmtGain(r.km_gain, r.km_exact) : "—"}</td>
                   <td className="px-4 py-2.5 text-right tabular">{r.status ? fmtGain(r.donate_gain, r.donate_exact) : "—"}</td>
                   <td className="px-4 py-2.5">

@@ -6,6 +6,7 @@ vi.mock("./env", () => ({ env: { ocrModel: "test/model" } }));
 const { normalizeOcr } = await import("./ocr");
 
 const row = (over: Record<string, unknown> = {}) => ({
+  image_index: 1,
   username: "Player123",
   display_name: "Cool Player",
   level_text: "Lv. 42",

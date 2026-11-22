@@ -30,12 +30,19 @@ export const env = {
   get geminiKey() {
     return process.env.GOOGLE_GENERATIVE_AI_API_KEY?.trim() || null;
   },
-  get geminiModel() {
-    return process.env.GEMINI_MODEL?.trim() || "gemini-3.5-flash";
+  /** Models tried in order; when one runs out of free quota (or is overloaded) the next one is used. */
+  get geminiModels(): string[] {
+    const fromEnv = (process.env.GEMINI_MODELS || process.env.GEMINI_MODEL || "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    return fromEnv.length
+      ? fromEnv
+      : ["gemini-3.5-flash", "gemini-3-flash-preview", "gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.8-flash", "gemini-3.5-flash-lite"];
   },
   /** Human-readable name of the OCR engine in use. */
   get ocrEngine() {
-    return this.geminiKey ? `google/${this.geminiModel} (Gemini API)` : `${this.ocrModel} (AI Gateway)`;
+    return this.geminiKey ? `Gemini API: ${this.geminiModels.join(" → ")}` : `${this.ocrModel} (AI Gateway)`;
   },
   get managers(): { name: string; password: string }[] {
     const list: { name: string; password: string }[] = [];
