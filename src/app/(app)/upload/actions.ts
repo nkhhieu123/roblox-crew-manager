@@ -6,6 +6,7 @@ import { requireManager } from "@/lib/server/session";
 import { db } from "@/lib/server/supabase";
 import { audit } from "@/lib/server/audit";
 import { runEvaluation } from "@/lib/server/evaluation";
+import { resolveViolationsOfLeftMembers } from "@/lib/server/left";
 import { cleanUsername, usernameKey } from "@/lib/engine/parse";
 
 const num = z.number().finite().nonnegative().nullable();
@@ -97,6 +98,7 @@ export async function saveSnapshot(input: SaveSnapshotInput): Promise<
     crew_total: p.crew_total,
     marked_left: p.mark_left,
   });
+  if (p.mark_left.length) await resolveViolationsOfLeftMembers({ usernames: p.mark_left }, manager);
 
   let evaluation = "";
   try {

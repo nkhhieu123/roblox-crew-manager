@@ -5,6 +5,7 @@ import { requireManager } from "@/lib/server/session";
 import { db } from "@/lib/server/supabase";
 import { audit } from "@/lib/server/audit";
 import { usernameKey } from "@/lib/engine/parse";
+import { resolveViolationsOfLeftMembers } from "@/lib/server/left";
 
 export async function setExempt(memberId: string, exempt: boolean, reason: string | null) {
   const manager = await requireManager();
@@ -30,6 +31,7 @@ export async function setLeft(memberId: string, left: boolean) {
     .eq("id", memberId);
   if (error) return { ok: false as const, error: error.message };
   await audit(manager, left ? "member.left" : "member.rejoined", "member", memberId, { username: m.username });
+  if (left) await resolveViolationsOfLeftMembers({ ids: [memberId] }, manager);
   revalidatePath("/", "layout");
   return { ok: true as const };
 }

@@ -391,6 +391,11 @@ function resultRow(m: MemberRow, r: ReturnType<typeof evaluateMember>, consecuti
     reasons: r.reasons,
     flags: r.flags,
     consecutive_fails: consecutive,
+  } as {
+    member_id: string;
+    username: string;
+    status: Status;
+    [k: string]: unknown;
   };
 }
 
@@ -406,6 +411,33 @@ async function saveEvaluation(a: {
   period: { kind: "daily" | "rolling"; start: string; end: string; final: boolean };
 }): Promise<RunResult> {
   const versionId = await ensureVersion(a.set, a.actor);
+
+  // keep "handled" marks (resolved + note) from the runs being replaced, so re-evaluating never re-opens them
+  const prevRuns = must(
+    a.period.kind === "daily"
+      ? await db().from("evaluations").select("id").eq("superseded", false).eq("period_kind", "daily").lt("period_start", a.period.end).gt("period_end", a.period.start)
+      : await db().from("evaluations").select("id").eq("superseded", false).eq("period_kind", "rolling").eq("to_snapshot_id", a.snapshotId),
+    "Load runs to supersede",
+  ) as { id: string }[];
+  const handled = new Map<string, { resolved_at: string | null; resolved_by: string | null; resolution_note: string | null }>();
+  if (prevRuns.length) {
+    const rows = await fetchAll<{ member_id: string | null; resolved_at: string | null; resolved_by: string | null; resolution_note: string | null }>(
+      (x, y) =>
+        db()
+          .from("evaluation_results")
+          .select("member_id, resolved_at, resolved_by, resolution_note")
+          .in("evaluation_id", prevRuns.map((r) => r.id))
+          .eq("resolved", true)
+          .order("id")
+          .range(x, y),
+      "Load handled violations",
+    );
+    for (const r of rows) if (r.member_id) handled.set(r.member_id, r);
+  }
+  for (const r of a.results) {
+    const h = r.member_id ? handled.get(r.member_id) : undefined;
+    if (h && (r.status === "FAIL" || r.status === "WARNING")) Object.assign(r, { resolved: true, ...h });
+  }
 
   // supersede previous runs for the same period / snapshot (they stay in history)
   const sup = db().from("evaluations").update({ superseded: true }).eq("superseded", false);
