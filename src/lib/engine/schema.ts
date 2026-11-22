@@ -21,6 +21,8 @@ export const ruleNodeSchema: z.ZodType<RuleNode> = z.lazy(() =>
 
 export const requirementConfigSchema = z
   .object({
+    period: z.enum(["daily", "rolling"]),
+    day_start_hour: z.number().int().min(0).max(23),
     window_hours: z.number().finite().min(1, "Chu kỳ tối thiểu 1 giờ").max(24 * 31, "Chu kỳ tối đa 31 ngày"),
     mode: z.enum(["ANY", "ALL", "CUSTOM"]),
     use_km: z.boolean(),

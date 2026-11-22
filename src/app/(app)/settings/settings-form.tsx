@@ -75,6 +75,14 @@ export function SettingsForm({ initial }: { initial: GeneralSettings }) {
           </p>
         </div>
 
+        <div className="space-y-2">
+          <Label htmlFor="edge">Ảnh gần 0 giờ (± phút)</Label>
+          <Input id="edge" type="number" min={0} max={240} value={s.day_edge_tolerance_min} onChange={(e) => set("day_edge_tolerance_min", Number(e.target.value))} className="w-28" />
+          <p className="text-xs text-muted-foreground">
+            Đánh giá theo ngày (00:00 → 00:00): ảnh chụp trong khoảng này quanh 0 giờ được coi như chụp đúng 0 giờ. Mỗi ngày chụp 1 ảnh trong khoảng 23:00–01:00 là chốt được kết quả.
+          </p>
+        </div>
+
         <label className="flex items-center gap-3 text-sm">
           <Switch checked={s.store_images} onCheckedChange={(v) => set("store_images", v)} />
           Lưu ảnh gốc vào Supabase Storage

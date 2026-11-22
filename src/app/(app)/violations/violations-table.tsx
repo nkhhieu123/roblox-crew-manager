@@ -36,7 +36,7 @@ interface Row {
   resolved_by: string | null;
   resolved_at: string | null;
   resolution_note: string | null;
-  evaluations: { requirement_name: string; config: { window_hours: number } };
+  evaluations: { requirement_name: string; config: { window_hours: number; period?: string } };
 }
 
 export function ViolationsTable({ rows, exportQuery, scope }: { rows: Row[]; exportQuery: string; scope: "latest" | "all" }) {
@@ -154,7 +154,7 @@ export function ViolationsTable({ rows, exportQuery, scope }: { rows: Row[]; exp
                     <span className="text-muted-foreground"> / {fmtNum(r.donate_required)}</span>
                   </td>
                   <td className="px-3 py-2.5 text-xs">
-                    <div>{fmtHours(r.hours)} <span className="text-muted-foreground">(chu kỳ {r.evaluations.config.window_hours}h)</span></div>
+                    <div>{fmtHours(r.hours)} <span className="text-muted-foreground">({r.evaluations.config.period === "daily" ? "theo ngày" : `chu kỳ ${r.evaluations.config.window_hours}h`})</span></div>
                     <div className="text-muted-foreground">
                       {fmtDateTime(r.from_captured_at)} → {fmtDateTime(r.to_captured_at)}
                     </div>

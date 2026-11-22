@@ -65,7 +65,41 @@ export function RequirementEditor({
               <Label htmlFor="name">Tên bộ điều kiện</Label>
               <Input id="name" value={name} onChange={(e) => setName(e.target.value)} placeholder="VD: Tiêu chuẩn 24h" />
             </div>
-            <div className="space-y-2">
+            <div className="space-y-2 sm:col-span-2">
+              <Label>Cách tính kỳ đánh giá</Label>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {(
+                  [
+                    ["daily", "Theo ngày", "Mỗi ngày từ 0 giờ đến 0 giờ hôm sau. Hết ngày ai chưa đạt → FAIL."],
+                    ["rolling", "Theo chu kỳ trượt", "N giờ gần nhất tính từ mỗi lần chụp (6/12/24/48 giờ…)."],
+                  ] as const
+                ).map(([v, title, desc]) => (
+                  <button
+                    key={v}
+                    type="button"
+                    onClick={() => set("period", v)}
+                    className={cn("rounded-lg border p-3 text-left transition-colors", cfg.period === v ? "border-primary bg-primary/10" : "hover:bg-muted/40")}
+                  >
+                    <div className="text-sm font-semibold">{title}</div>
+                    <div className="text-xs text-muted-foreground">{desc}</div>
+                  </button>
+                ))}
+              </div>
+              {cfg.period === "daily" && (
+                <div className="flex items-center gap-2 text-sm">
+                  <span className="text-muted-foreground">Ngày bắt đầu lúc</span>
+                  <NativeSelect value={cfg.day_start_hour} onChange={(e) => set("day_start_hour", Number(e.target.value))}>
+                    {Array.from({ length: 24 }, (_, h) => (
+                      <option key={h} value={h}>
+                        {String(h).padStart(2, "0")}:00
+                      </option>
+                    ))}
+                  </NativeSelect>
+                  <span className="text-muted-foreground">(giờ Việt Nam)</span>
+                </div>
+              )}
+            </div>
+            <div className={cn("space-y-2", cfg.period === "daily" && "hidden")}>
               <Label>Khoảng thời gian đánh giá</Label>
               <div className="flex flex-wrap gap-2">
                 {WINDOWS.map((w) => (
@@ -225,7 +259,15 @@ export function RequirementEditor({
           </CardHeader>
           <CardContent className="space-y-3 text-sm">
             <p>
-              Trong mỗi <b>{cfg.window_hours} giờ</b>, thành viên PASS khi:
+              {cfg.period === "daily" ? (
+                <>
+                  Mỗi ngày <b>{String(cfg.day_start_hour).padStart(2, "0")}:00 → {String(cfg.day_start_hour).padStart(2, "0")}:00</b> hôm sau, thành viên PASS khi:
+                </>
+              ) : (
+                <>
+                  Trong mỗi <b>{cfg.window_hours} giờ</b>, thành viên PASS khi:
+                </>
+              )}
             </p>
             <p className="rounded-md bg-muted/40 px-3 py-2 font-mono text-xs">{preview}</p>
             <ul className="list-disc space-y-1 pl-4 text-xs text-muted-foreground">

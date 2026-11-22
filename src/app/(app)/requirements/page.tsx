@@ -71,7 +71,9 @@ export default async function RequirementsPage() {
                 {s.description && <p className="text-muted-foreground">{s.description}</p>}
                 <dl className="grid grid-cols-2 gap-x-4 gap-y-2">
                   <dt className="text-muted-foreground">Chu kỳ đánh giá</dt>
-                  <dd className="font-medium">{fmtHours(c.window_hours)}</dd>
+                  <dd className="font-medium">
+                    {c.period === "daily" ? `Theo ngày (${String(c.day_start_hour).padStart(2, "0")}:00 → ${String(c.day_start_hour).padStart(2, "0")}:00)` : fmtHours(c.window_hours)}
+                  </dd>
                   <dt className="text-muted-foreground">Chế độ</dt>
                   <dd className="font-medium">{MODE_LABEL[c.mode]}</dd>
                   <dt className="text-muted-foreground">Điều kiện</dt>

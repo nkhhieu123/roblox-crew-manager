@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parseNumber, levenshtein } from "./parse";
 import { crossesWeeklyReset, lastWeeklyReset, parseCountdown, resetBetween } from "./week";
-import { evaluateMember } from "./evaluate";
+import { dayPeriodAt, evaluateMember, evaluateMemberDaily } from "./evaluate";
 import { currentRaceWeek, weekContribution } from "./race";
 import { DEFAULT_REQUIREMENT, DEFAULT_SETTINGS, type DataPoint, type RequirementConfig } from "./types";
 
@@ -350,5 +350,58 @@ describe("weekly race", () => {
     const start = Date.parse(R);
     expect(weekContribution([p("2026-11-22T04:33:00Z", 1, 8000), p("2026-11-24T05:00:00Z", 2, 9000)], start).donateApprox).toBe(true);
     expect(weekContribution([p("2026-11-24T05:00:00Z", 2, 9000)], start).donate).toBeNull();
+  });
+});
+
+describe("daily periods (00:00 → 00:00 Vietnam time)", () => {
+  // day = 2026-11-19 00:00 VN (= 11-21T17:00Z) → 2026-11-20 00:00 VN (= 11-22T17:00Z)
+  const day = dayPeriodAt(Date.parse("2026-11-19T05:00:00Z"), S, 0);
+  const D: RequirementConfig = { ...DEFAULT_REQUIREMENT, period: "daily", mode: "ANY", min_km: 100000, min_donate: 5000, warning_pct: 0 };
+  const SS = { ...S, day_edge_tolerance_min: 60 };
+  const pt2 = (id: string, iso: string, km: number, don: number) => pt(id, iso, km, don);
+  const after = Date.parse("2026-11-20T03:00:00Z");
+
+  it("computes the local day boundaries", () => {
+    expect(new Date(day.start).toISOString()).toBe("2026-11-18T17:00:00.000Z");
+    expect(new Date(day.end).toISOString()).toBe("2026-11-19T17:00:00.000Z");
+  });
+
+  it("shows progress during the day (screenshots 28 minutes apart)", () => {
+    const r = evaluateMemberDaily([pt2("a", "2026-11-19T04:33:00Z", 844919, 8000), pt2("b", "2026-11-19T05:01:00Z", 850000, 8000)], day, Date.parse("2026-11-19T06:00:00Z"), D, SS);
+    expect(r.status).toBe("PENDING");
+    expect(r.km.value).toBe(5081);
+    expect(r.reason_summary).toContain("Đang trong ngày");
+  });
+
+  it("passes as soon as the requirement is met during the day", () => {
+    const r = evaluateMemberDaily([pt2("a", "2026-11-19T04:33:00Z", 0, 0), pt2("b", "2026-11-19T09:00:00Z", 120000, 0)], day, Date.parse("2026-11-19T10:00:00Z"), D, SS);
+    expect(r.status).toBe("PASS");
+  });
+
+  it("FAIL after the day when snapshots are near both midnights", () => {
+    const r = evaluateMemberDaily(
+      [pt2("a", "2026-11-18T16:40:00Z", 10000, 100), pt2("b", "2026-11-19T17:30:00Z", 40000, 100)],
+      day, after, D, SS,
+    );
+    expect(r.status).toBe("FAIL");
+    expect(r.km).toEqual({ value: 30000, exact: true, flags: [] });
+  });
+
+  it("FAIL via upper bound even without snapshots near midnight", () => {
+    const r = evaluateMemberDaily(
+      [pt2("a", "2026-11-18T10:00:00Z", 10000, 100), pt2("b", "2026-11-19T05:00:00Z", 20000, 100), pt2("c", "2026-11-20T01:00:00Z", 30000, 100)],
+      day, after, D, SS,
+    );
+    expect(r.status).toBe("FAIL");
+    expect(r.flags).toContain("upper_bound_fail");
+  });
+
+  it("PENDING with an estimate when it cannot be decided", () => {
+    const r = evaluateMemberDaily(
+      [pt2("a", "2026-11-18T10:00:00Z", 0, 0), pt2("b", "2026-11-19T05:00:00Z", 60000, 0), pt2("c", "2026-11-20T01:00:00Z", 200000, 0)],
+      day, after, D, SS,
+    );
+    expect(r.status).toBe("PENDING");
+    expect(r.reasons.join(" ")).toContain("Ước tính");
   });
 });

@@ -1,6 +1,6 @@
 import type { DataPoint, Gain, GeneralSettings, MemberEvaluation, Metric, RequirementConfig } from "./types";
-import { resetBetween } from "./week";
-import { buildRuleTree, countConditions, evaluateTree, fmt, METRIC_LABEL, minThresholds } from "./rules";
+import { localParts, resetBetween, zonedToUtc } from "./week";
+import { buildRuleTree, countConditions, evaluateTree, fmt, METRIC_LABEL, minThresholds, type TreeOutcome } from "./rules";
 
 const HOUR = 3600_000;
 
@@ -18,6 +18,10 @@ export const FLAG_LABELS: Record<string, string> = {
   not_in_scope: "Không thuộc phạm vi áp dụng của bộ điều kiện",
   exempt: "Được miễn điều kiện",
   empty_rule: "Bộ điều kiện chưa có điều kiện nào",
+  in_progress: "Ngày chưa kết thúc",
+  day_not_covered: "Thiếu ảnh gần 0 giờ để chốt kết quả ngày",
+  upper_bound_fail: "Không đạt ngay cả khi tính rộng hơn cả ngày",
+  early_pass: "Đã đạt trước khi đủ chu kỳ",
 };
 
 type ResetSettings = Pick<GeneralSettings, "week_reset_weekday" | "week_reset_hour" | "timezone">;
@@ -194,15 +198,30 @@ export function evaluateMember(
     };
   }
   if (!chain) {
-    return {
-      ...base,
-      status: "PENDING",
-      reason_summary: "Thiếu dữ liệu để xác minh",
-      reasons: [
-        `${FLAG_LABELS.no_baseline} (cần snapshot cũ hơn ít nhất ${fmt(W * (1 - settings.baseline_tolerance_pct / 100), 1)} giờ)`,
-      ],
-      flags: ["no_baseline"],
-    };
+    // not enough history for a full window yet: still show progress since the earliest snapshot.
+    // It is a lower bound for the window, so it can PASS early but never FAIL.
+    const sorted = [...points].sort((a, b) => t(a) - t(b));
+    const first = sorted[0];
+    const need = `${FLAG_LABELS.no_baseline} (cần snapshot cũ hơn ít nhất ${fmt(W * (1 - settings.baseline_tolerance_pct / 100), 1)} giờ)`;
+    if (first && first.snapshot_id !== target.snapshot_id) {
+      const partial = sorted.filter((p) => t(p) <= t(target));
+      const hours = (t(target) - t(first)) / HOUR;
+      const km = { ...kmGain(partial, settings), exact: false };
+      const donate = { ...donateGain(partial, settings), exact: false };
+      const outcome = evaluateTree(tree, { km, donate }, 1);
+      const prog = { ...base, km, donate, from_snapshot_id: first.snapshot_id, from_captured_at: first.captured_at, hours: round(hours, 2) };
+      if (outcome.result === true) {
+        return { ...prog, status: "PASS", reason_summary: `Đạt yêu cầu (đạt sớm sau ${fmt(hours, 1)} giờ)`, reasons: leafReasons(outcome), flags: ["early_pass"] };
+      }
+      return {
+        ...prog,
+        status: "PENDING",
+        reason_summary: `Đang tính: mới có ${fmt(hours, 1)}/${fmt(W)} giờ dữ liệu`,
+        reasons: [...leafReasons(outcome), need],
+        flags: ["no_baseline"],
+      };
+    }
+    return { ...base, status: "PENDING", reason_summary: "Thiếu dữ liệu để xác minh", reasons: [need], flags: ["no_baseline"] };
   }
 
   // ---- Evaluate the rule ----
@@ -217,36 +236,207 @@ export function evaluateMember(
   base.km_required = mins.km !== undefined ? round(mins.km * scale) : null;
   base.donate_required = mins.donate !== undefined ? round(mins.donate * scale) : null;
 
-  const reasons: string[] = outcome.leaves.map((l) => {
+  const reasons = leafReasons(outcome);
+  for (const f of flags) if (FLAG_LABELS[f]) reasons.push(FLAG_LABELS[f]);
+  const { status, summary } = decide(outcome, cfg);
+  return { ...base, status, reason_summary: summary, reasons, flags: [...flags] };
+}
+
+function leafReasons(outcome: TreeOutcome, prefix = "tăng"): string[] {
+  return outcome.leaves.map((l) => {
     const label = METRIC_LABEL[l.node.metric];
     const val = l.value === null ? "chưa rõ" : `${fmt(l.value)}${l.exact ? "" : " (tối thiểu)"}`;
     const verdict = l.result === true ? "đạt" : l.result === false ? "không đạt" : "chưa xác định";
-    return `${label} tăng ${val} / yêu cầu ${l.node.op} ${fmt(l.threshold)} — ${verdict}`;
+    return `${label} ${prefix} ${val} / yêu cầu ${l.node.op} ${fmt(l.threshold)} — ${verdict}`;
   });
-  for (const f of flags) if (FLAG_LABELS[f]) reasons.push(FLAG_LABELS[f]);
+}
 
-  let status: MemberEvaluation["status"];
-  let summary: string;
-  if (outcome.result === true) {
-    status = "PASS";
-    summary = "Đạt yêu cầu";
-  } else if (outcome.result === null) {
-    status = "PENDING";
-    summary = "Thiếu dữ liệu để xác minh";
-  } else {
-    const failing = new Set(outcome.leaves.filter((l) => l.result === false).map((l) => l.node.metric));
-    if (cfg.mode === "CUSTOM") summary = "Không thỏa điều kiện tùy chỉnh";
-    else if (failing.has("km") && failing.has("donate")) summary = "Không đạt cả hai điều kiện";
-    else if (failing.has("km")) summary = "Không đạt mức KM tối thiểu";
-    else summary = "Không đạt mức Donate tối thiểu";
+function failSummary(outcome: TreeOutcome, cfg: RequirementConfig): string {
+  const failing = new Set(outcome.leaves.filter((l) => l.result === false).map((l) => l.node.metric));
+  if (cfg.mode === "CUSTOM") return "Không thỏa điều kiện tùy chỉnh";
+  if (failing.has("km") && failing.has("donate")) return "Không đạt cả hai điều kiện";
+  if (failing.has("km")) return "Không đạt mức KM tối thiểu";
+  return "Không đạt mức Donate tối thiểu";
+}
 
-    if (cfg.warning_pct > 0 && outcome.closeness >= cfg.warning_pct / 100) {
-      status = "WARNING";
-      summary = `Gần đạt (${Math.floor(outcome.closeness * 100)}% yêu cầu) — ${summary.toLowerCase()}`;
-    } else status = "FAIL";
+function decide(outcome: TreeOutcome, cfg: RequirementConfig): { status: MemberEvaluation["status"]; summary: string } {
+  if (outcome.result === true) return { status: "PASS", summary: "Đạt yêu cầu" };
+  if (outcome.result === null) return { status: "PENDING", summary: "Thiếu dữ liệu để xác minh" };
+  const summary = failSummary(outcome, cfg);
+  if (cfg.warning_pct > 0 && outcome.closeness >= cfg.warning_pct / 100) {
+    return { status: "WARNING", summary: `Gần đạt (${Math.floor(outcome.closeness * 100)}% yêu cầu) — ${summary.toLowerCase()}` };
+  }
+  return { status: "FAIL", summary };
+}
+
+// ---------------------------------------------------------------------------
+// Daily periods: each calendar day (00:00 -> 00:00 next day, local time) is one evaluation period.
+// Screenshots can be taken at any time, so the value at 00:00 is anchored as follows:
+//  - a snapshot within `day_edge_tolerance_min` of 00:00 counts as taken at 00:00;
+//  - otherwise the day's gain is bounded: lower = between snapshots inside the day,
+//    upper = from the last snapshot before the day to the first one after it.
+// PASS as soon as the lower bound meets the rule. FAIL only after the day is over, when the day is covered
+// by snapshots near both 00:00 marks, or when even the upper bound misses the rule. Otherwise PENDING,
+// with an interpolated estimate shown for information only (never used to decide).
+// ---------------------------------------------------------------------------
+
+export interface Period {
+  start: number; // ms
+  end: number; // ms
+}
+
+function interpolate(a: DataPoint, b: DataPoint, at: number, pick: (p: DataPoint) => number | null, s: GeneralSettings): number | null {
+  const va = pick(a);
+  const vb = pick(b);
+  if (va === null || vb === null || vb < va) return null;
+  if (resetBetween({ ms: t(a), next_reset_at: a.next_reset_at }, { ms: t(b), next_reset_at: b.next_reset_at }, s)) return null;
+  const f = (at - t(a)) / (t(b) - t(a));
+  return va + (vb - va) * Math.min(1, Math.max(0, f));
+}
+
+export function evaluateMemberDaily(
+  points: DataPoint[],
+  period: Period,
+  nowMs: number,
+  cfg: RequirementConfig,
+  settings: GeneralSettings,
+  opts: EvaluateOptions = {},
+): MemberEvaluation {
+  const tree = buildRuleTree(cfg);
+  const mins = minThresholds(tree);
+  const tol = (settings.day_edge_tolerance_min ?? 60) * 60_000;
+  const sorted = [...points].sort((a, b) => t(a) - t(b));
+  const inside = sorted.filter((p) => t(p) >= period.start && t(p) <= period.end);
+  const before = [...sorted].reverse().find((p) => t(p) < period.start);
+  const after = sorted.find((p) => t(p) > period.end);
+  const dayOver = nowMs >= period.end;
+
+  const startAnchor = before && period.start - t(before) <= tol ? before : inside[0];
+  const endAnchor = after && t(after) - period.end <= tol ? after : inside[inside.length - 1];
+  const lowChain =
+    startAnchor && endAnchor && t(endAnchor) > t(startAnchor) ? sorted.filter((p) => t(p) >= t(startAnchor) && t(p) <= t(endAnchor)) : null;
+  const coversStart = !!startAnchor && Math.abs(t(startAnchor) - period.start) <= tol;
+  const coversEnd = !!endAnchor && Math.abs(period.end - t(endAnchor)) <= tol;
+  const fullyCovered = coversStart && coversEnd;
+
+  const base: MemberEvaluation = {
+    status: "PENDING",
+    km: { value: null, exact: false, flags: [] },
+    donate: { value: null, exact: false, flags: [] },
+    km_required: mins.km ?? null,
+    donate_required: mins.donate ?? null,
+    from_snapshot_id: startAnchor?.snapshot_id ?? null,
+    from_captured_at: startAnchor?.captured_at ?? null,
+    to_captured_at: endAnchor?.captured_at ?? null,
+    hours: startAnchor && endAnchor && lowChain ? round((t(endAnchor) - t(startAnchor)) / HOUR, 2) : null,
+    km_per_day: null,
+    donate_per_day: null,
+    reason_summary: "",
+    reasons: [],
+    flags: [],
+  };
+
+  if (opts.inScope === false) return { ...base, status: "EXEMPT", reason_summary: FLAG_LABELS.not_in_scope, flags: ["not_in_scope"] };
+  if (countConditions(tree) === 0) return { ...base, reason_summary: FLAG_LABELS.empty_rule, flags: ["empty_rule"] };
+
+  let lowKm: Gain = { value: null, exact: false, flags: [] };
+  let lowDon: Gain = { value: null, exact: false, flags: [] };
+  if (lowChain) {
+    lowKm = kmGain(lowChain, settings);
+    lowDon = donateGain(lowChain, settings);
+    if (!fullyCovered) {
+      lowKm = { ...lowKm, exact: false };
+      lowDon = { ...lowDon, exact: false };
+    }
+  }
+  base.km = lowKm;
+  base.donate = lowDon;
+
+  if (opts.exempt) return { ...base, status: "EXEMPT", reason_summary: FLAG_LABELS.exempt, flags: ["exempt"] };
+
+  const flags = new Set<string>([...lowKm.flags, ...lowDon.flags]);
+  const low = evaluateTree(tree, { km: lowKm, donate: lowDon }, 1);
+  const reasons = leafReasons(low, "trong ngày");
+
+  if (low.result === true) {
+    return { ...base, status: "PASS", reason_summary: dayOver ? "Đạt yêu cầu trong ngày" : "Đã đạt yêu cầu hôm nay", reasons, flags: [...flags] };
   }
 
-  return { ...base, status, reason_summary: summary, reasons, flags: [...flags] };
+  if (!dayOver) {
+    const hoursLeft = Math.max(0, (period.end - nowMs) / HOUR);
+    return {
+      ...base,
+      status: "PENDING",
+      reason_summary: lowChain ? `Đang trong ngày — còn ${fmt(hoursLeft, 1)} giờ` : "Chưa đủ ảnh trong ngày để tính",
+      reasons: lowChain ? reasons : ["Cần ít nhất 2 ảnh trong ngày (hoặc 1 ảnh gần 0 giờ + 1 ảnh trong ngày)"],
+      flags: [...flags, "in_progress"],
+    };
+  }
+
+  if (low.result === false && fullyCovered) {
+    const d = decide(low, cfg);
+    return { ...base, status: d.status, reason_summary: d.summary, reasons, flags: [...flags] };
+  }
+
+  // day over but not covered near 00:00 -> upper bound over a wider span can still prove a failure
+  if (before && after) {
+    const hiChain = sorted.filter((p) => t(p) >= t(before) && t(p) <= t(after));
+    const hiKm = kmGain(hiChain, settings);
+    const hiDon = donateGain(hiChain, settings);
+    const high = evaluateTree(tree, { km: hiKm, donate: hiDon }, 1);
+    if (high.result === false) {
+      const d = decide(high, cfg);
+      return {
+        ...base,
+        status: d.status,
+        reason_summary: d.summary,
+        reasons: [
+          ...leafReasons(high, "tăng (tính rộng hơn cả ngày)"),
+          "Không có ảnh sát 0 giờ — đã tính từ ảnh trước 0h đầu ngày tới ảnh sau 0h cuối ngày mà vẫn không đạt",
+        ],
+        flags: [...flags, "upper_bound_fail"],
+      };
+    }
+  }
+
+  // still undecided: show an interpolated estimate for information only
+  const est: string[] = [];
+  const startVal = (pick: (p: DataPoint) => number | null) =>
+    coversStart && startAnchor ? pick(startAnchor) : before && inside[0] ? interpolate(before, inside[0], period.start, pick, settings) : null;
+  const endVal = (pick: (p: DataPoint) => number | null) =>
+    coversEnd && endAnchor ? pick(endAnchor) : after && inside.length ? interpolate(inside[inside.length - 1], after, period.end, pick, settings) : null;
+  for (const [label, pick] of [
+    ["KM", (p: DataPoint) => p.weekly_km],
+    ["Donate", (p: DataPoint) => p.donated],
+  ] as const) {
+    const a = startVal(pick);
+    const b = endVal(pick);
+    if (a !== null && b !== null && b >= a) est.push(`${label} ≈ ${fmt(b - a)}`);
+  }
+  return {
+    ...base,
+    status: "PENDING",
+    reason_summary: "Thiếu ảnh gần 0 giờ để chốt kết quả",
+    reasons: [
+      ...reasons,
+      `Cần ảnh chụp trong khoảng ±${fmt(settings.day_edge_tolerance_min ?? 60)} phút quanh 00:00 đầu và cuối ngày`,
+      ...(est.length ? [`Ước tính theo tốc độ (chỉ tham khảo, không dùng để loại): ${est.join(", ")}`] : []),
+    ],
+    flags: [...flags, "day_not_covered"],
+  };
+}
+
+/** The daily period (local time, starting at `startHour`) that contains `ms`. */
+export function dayPeriodAt(ms: number, settings: Pick<GeneralSettings, "timezone">, startHour = 0): Period {
+  const p = localParts(ms, settings.timezone);
+  let start = zonedToUtc(p.year, p.month, p.day, startHour, settings.timezone);
+  if (start > ms) {
+    const d = new Date(Date.UTC(p.year, p.month - 1, p.day - 1));
+    start = zonedToUtc(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate(), startHour, settings.timezone);
+  }
+  const np = localParts(start + 36 * HOUR, settings.timezone); // safely inside the next local day
+  const end = zonedToUtc(np.year, np.month, np.day, startHour, settings.timezone);
+  return { start, end };
 }
 
 function round(n: number, digits = 2) {

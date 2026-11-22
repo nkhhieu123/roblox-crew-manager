@@ -135,7 +135,9 @@ export default async function MembersPage() {
         }
         description={
           latest
-            ? `${members.length} thành viên · Trạng thái theo lần đánh giá ${fmtDateTime(latest.to_captured_at)} (${latest.requirement_name})`
+            ? latest.period_kind === "daily" && latest.period_start
+              ? `${members.length} thành viên · Kết quả ngày ${fmtDateTime(latest.period_start)} → ${fmtDateTime(latest.period_end)}${latest.is_final ? " (đã chốt)" : " (đang diễn ra — cột tăng = tiến độ trong ngày)"} · ${latest.requirement_name}`
+              : `${members.length} thành viên · Trạng thái theo lần đánh giá ${fmtDateTime(latest.to_captured_at)} (${latest.requirement_name})`
             : `${members.length} thành viên · Chưa có lần đánh giá nào`
         }
       />

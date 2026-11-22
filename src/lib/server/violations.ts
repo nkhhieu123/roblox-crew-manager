@@ -32,7 +32,8 @@ export function parseViolationFilters(sp: Record<string, string | string[] | und
 }
 
 export async function queryViolations(f: ViolationFilters): Promise<{ rows: ViolationRow[]; latestId: string | null }> {
-  const latest = f.scope === "latest" ? await getLatestEvaluation() : null;
+  // "latest" = the most recent FINISHED period (a day still running cannot have violations yet)
+  const latest = f.scope === "latest" ? await getLatestEvaluation({ finalOnly: true }) : null;
   if (f.scope === "latest" && !latest) return { rows: [], latestId: null };
 
   const statuses = f.includeWarning ? ["FAIL", "WARNING"] : ["FAIL"];

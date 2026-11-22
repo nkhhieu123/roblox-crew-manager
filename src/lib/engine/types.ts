@@ -16,6 +16,8 @@ export interface GeneralSettings {
   timezone: string;
   /** Baseline snapshot may be up to this % younger than the evaluation window. */
   baseline_tolerance_pct: number;
+  /** Daily periods: a snapshot within this many minutes of 00:00 counts as taken at 00:00. */
+  day_edge_tolerance_min: number;
 }
 
 export const DEFAULT_SETTINGS: GeneralSettings = {
@@ -25,6 +27,7 @@ export const DEFAULT_SETTINGS: GeneralSettings = {
   week_reset_hour: 0,
   timezone: "Asia/Ho_Chi_Minh",
   baseline_tolerance_pct: 15,
+  day_edge_tolerance_min: 60,
 };
 
 // ---------- Requirement configuration ----------
@@ -45,7 +48,14 @@ export interface GroupNode {
 export type RuleNode = ConditionNode | GroupNode;
 
 export interface RequirementConfig {
-  /** Evaluation window in hours (6, 12, 24, 48 or custom). */
+  /**
+   * "daily": each calendar day (day_start_hour -> same hour next day, local time) is one period.
+   * "rolling": the last `window_hours` hours before each snapshot.
+   */
+  period: "daily" | "rolling";
+  /** Hour (local time) at which a daily period starts. */
+  day_start_hour: number;
+  /** Evaluation window in hours (6, 12, 24, 48 or custom) - rolling mode only. */
   window_hours: number;
   mode: Mode;
   use_km: boolean;
@@ -64,6 +74,8 @@ export interface RequirementConfig {
 }
 
 export const DEFAULT_REQUIREMENT: RequirementConfig = {
+  period: "daily",
+  day_start_hour: 0,
   window_hours: 24,
   mode: "ANY",
   use_km: true,

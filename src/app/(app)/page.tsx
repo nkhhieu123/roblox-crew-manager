@@ -9,11 +9,18 @@ import { fetchAll } from "@/lib/server/fetch-all";
 import { getLatestEvaluation, type ResultRow } from "@/lib/server/evaluation";
 import { getActiveRequirement } from "@/lib/server/requirements";
 import { dailyActivity } from "@/lib/server/dashboard";
-import { fmtDateTime, fmtGain, fmtNum, timeAgo } from "@/lib/format";
+import { fmtDate, fmtDateTime, fmtGain, fmtNum, timeAgo } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { DailyCharts, PassRateChart, TopMembersChart } from "./dashboard-charts";
 
 export const metadata = { title: "Dashboard · Crew Manager" };
+
+function periodHint(e: { period_kind?: string; period_start?: string | null; is_final?: boolean; config: { window_hours: number } }) {
+  if (e.period_kind === "daily" && e.period_start) {
+    return `ngày ${fmtDate(e.period_start)}${e.is_final ? "" : " (đang diễn ra)"}`;
+  }
+  return `trong chu kỳ ${e.config.window_hours}h gần nhất`;
+}
 
 function Stat({
   label,
@@ -106,7 +113,7 @@ export default async function DashboardPage() {
         description={
           active ? (
             <>
-              Bộ điều kiện đang áp dụng: <b>{active.name}</b> (v{active.version}, chu kỳ {active.config.window_hours}h)
+              Bộ điều kiện đang áp dụng: <b>{active.name}</b> (v{active.version}, {active.config.period === "daily" ? "đánh giá theo ngày 00:00 → 00:00" : `chu kỳ ${active.config.window_hours}h`})
             </>
           ) : (
             <span className="text-warning">
@@ -127,8 +134,8 @@ export default async function DashboardPage() {
         <Stat label="FAIL" value={fmtNum(s?.FAIL ?? 0)} icon={ShieldAlert} tone="destructive" href="/violations" hint={s?.WARNING ? `+ ${s.WARNING} WARNING` : undefined} />
         <Stat label="PENDING" value={fmtNum(s?.PENDING ?? 0)} icon={HelpCircle} tone="warning" hint="Chưa đủ dữ liệu" />
         <Stat label="Chưa có dữ liệu mới" value={fmtNum(s?.no_new_data ?? 0)} icon={Hourglass} tone="info" hint="Không có trong snapshot mới nhất" />
-        <Stat label="Tổng KM phát sinh" value={fmtNum(s?.km_total ?? 0)} icon={Footprints} hint={latest ? `trong chu kỳ ${latest.config.window_hours}h gần nhất` : undefined} />
-        <Stat label="Tổng Donate phát sinh" value={fmtNum(s?.donate_total ?? 0)} icon={Coins} hint={latest ? `trong chu kỳ ${latest.config.window_hours}h gần nhất` : undefined} />
+        <Stat label="Tổng KM phát sinh" value={fmtNum(s?.km_total ?? 0)} icon={Footprints} hint={latest ? periodHint(latest) : undefined} />
+        <Stat label="Tổng Donate phát sinh" value={fmtNum(s?.donate_total ?? 0)} icon={Coins} hint={latest ? periodHint(latest) : undefined} />
         <Stat
           label="Snapshot gần nhất"
           value={<span className="text-base">{snap ? fmtDateTime(snap.captured_at) : "—"}</span>}
