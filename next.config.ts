@@ -1,9 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
-  cacheComponents: true,
-  partialPrefetching: true,
+  // Private, always-fresh dashboard: every page is rendered dynamically per request.
+  serverExternalPackages: ["exceljs"],
   turbopack: {
     rules: {
       "*.css": {
