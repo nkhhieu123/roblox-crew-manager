@@ -20,6 +20,20 @@ export async function setExempt(memberId: string, exempt: boolean, reason: strin
   return { ok: true as const };
 }
 
+export async function setLeft(memberId: string, left: boolean) {
+  const manager = await requireManager();
+  const { data: m } = await db().from("members").select("username").eq("id", memberId).single();
+  if (!m) return { ok: false as const, error: "Không tìm thấy thành viên" };
+  const { error } = await db()
+    .from("members")
+    .update({ left_at: left ? new Date().toISOString() : null, updated_at: new Date().toISOString() })
+    .eq("id", memberId);
+  if (error) return { ok: false as const, error: error.message };
+  await audit(manager, left ? "member.left" : "member.rejoined", "member", memberId, { username: m.username });
+  revalidatePath("/", "layout");
+  return { ok: true as const };
+}
+
 export async function saveNotes(memberId: string, notes: string) {
   const manager = await requireManager();
   const { data: m } = await db().from("members").select("username").eq("id", memberId).single();

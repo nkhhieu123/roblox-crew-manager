@@ -31,6 +31,10 @@ const payloadSchema = z.object({
   ocr_model: z.string().nullable(),
   ocr_raw: z.unknown().optional(),
   notes: z.string().max(1000).nullable(),
+  /** "Members 30 / 30" read in-game, if visible */
+  crew_total: z.number().int().nonnegative().nullable(),
+  /** members confirmed as no longer in the crew (complete list, absent from this snapshot) */
+  mark_left: z.array(z.string().trim().min(1).max(40)).max(500),
   reset_countdown_text: z.string().max(100).nullable(),
   next_reset_at: z
     .string()
@@ -90,6 +94,8 @@ export async function saveSnapshot(input: SaveSnapshotInput): Promise<
     donate_type: p.donate_type,
     next_reset_at: p.next_reset_at,
     reset_countdown_text: p.reset_countdown_text,
+    crew_total: p.crew_total,
+    marked_left: p.mark_left,
   });
 
   let evaluation = "";

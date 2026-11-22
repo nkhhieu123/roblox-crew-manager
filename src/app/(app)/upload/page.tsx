@@ -14,8 +14,8 @@ function daysAgoIso(days: number) {
 export default async function UploadPage() {
   const since = daysAgoIso(60);
   const [members, settings, lastReset, recent] = await Promise.all([
-    fetchAll<{ username: string; display_name: string | null }>(
-      (a, b) => db().from("members").select("username, display_name").order("username").range(a, b),
+    fetchAll<{ username: string; display_name: string | null; left_at: string | null }>(
+      (a, b) => db().from("members").select("username, display_name, left_at").order("username").range(a, b),
       "Load members",
     ),
     getSettings(),
@@ -46,8 +46,10 @@ export default async function UploadPage() {
   ]);
 
   const previous: Record<string, PreviousValue> = {};
+  const activeKeys = new Set(members.filter((m) => !m.left_at).map((m) => usernameKey(m.username)));
   for (const e of recent) {
     const k = usernameKey(e.username);
+    if (!activeKeys.has(k)) continue; // left the crew: not expected in new screenshots
     const cur = previous[k];
     if (cur && cur.captured_at >= e.snapshots.captured_at) continue;
     previous[k] = {

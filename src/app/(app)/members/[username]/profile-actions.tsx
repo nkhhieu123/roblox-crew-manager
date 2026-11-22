@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { ConfirmButton } from "@/components/app/confirm-button";
-import { deleteMember, mergeMember, saveNotes, setExempt } from "../actions";
+import { deleteMember, mergeMember, saveNotes, setExempt, setLeft } from "../actions";
 
 export function MemberProfileActions({
   memberId,
@@ -19,12 +19,14 @@ export function MemberProfileActions({
   exempt,
   exemptReason,
   notes,
+  leftAt,
 }: {
   memberId: string;
   username: string;
   exempt: boolean;
   exemptReason: string | null;
   notes: string | null;
+  leftAt: string | null;
 }) {
   const router = useRouter();
   const [reason, setReason] = useState(exemptReason ?? "");
@@ -55,6 +57,34 @@ export function MemberProfileActions({
             />
             {exempt ? "Đang được miễn" : "Không miễn"}
           </label>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Trong crew</CardTitle>
+          <CardDescription>
+            Thường được tự cập nhật khi upload đủ danh sách. Người đã rời vẫn giữ lịch sử, không bị đánh giá tiếp.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ConfirmButton
+            variant={leftAt ? "default" : "outline"}
+            title={leftAt ? `Đưa ${username} trở lại crew?` : `Đánh dấu ${username} đã rời crew?`}
+            description={
+              leftAt
+                ? "Thành viên sẽ xuất hiện lại trong danh sách và được đánh giá từ lần upload tiếp theo."
+                : "Thành viên sẽ ẩn khỏi danh sách chính và không bị đánh giá tiếp. Lịch sử vẫn được giữ."
+            }
+            confirmLabel={leftAt ? "Đưa trở lại" : "Đánh dấu đã rời"}
+            onConfirm={async () => {
+              const r = await setLeft(memberId, !leftAt);
+              if (r.ok) toast.success(leftAt ? "Đã đưa trở lại crew" : "Đã đánh dấu rời crew");
+              else toast.error(r.error);
+            }}
+          >
+            {leftAt ? "Đưa trở lại crew" : "Đánh dấu đã rời crew"}
+          </ConfirmButton>
         </CardContent>
       </Card>
 

@@ -476,6 +476,9 @@ export function UploadClient({
     };
   }
 
+  // usernames the manager un-ticked in the "left the crew" list
+  const [keepInCrew, setKeepInCrew] = useState<Set<string>>(new Set());
+
   const stats = useMemo(() => {
     const unverified = rows.filter((r) => !r.verified).length;
     const newNames = rows.filter((r) => r.username && !known.has(usernameKey(r.username))).map((r) => r.username);
@@ -486,6 +489,12 @@ export function UploadClient({
       .map((k) => known.get(k) ?? k);
     return { total: rows.length, unverified, newMembers: newNames.length, newNames, missing };
   }, [rows, known, previous]);
+
+  /** Only when the scan covers the whole crew ("Members 30 / 30" matches) can absent members be marked as left. */
+  const leftCandidates = useMemo(
+    () => (memberTotal !== null && memberTotal === stats.total && stats.unverified === 0 ? stats.missing : []),
+    [memberTotal, stats],
+  );
 
   function save() {
     // validate numbers
@@ -530,6 +539,8 @@ export function UploadClient({
         notes: notes.trim() || null,
         reset_countdown_text: countdownText.trim() || null,
         next_reset_at: nextReset ? nextReset.toISOString() : null,
+        crew_total: memberTotal,
+        mark_left: leftCandidates.filter((u) => !keepInCrew.has(u)),
         entries,
       });
       if (!res.ok) {
@@ -874,6 +885,43 @@ export function UploadClient({
                 <Textarea id="notes" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
               </div>
             </div>
+            {stats.missing.length > 0 && (
+              <div className="rounded-lg border border-warning/40 bg-warning/5 p-3 text-sm">
+                {leftCandidates.length > 0 ? (
+                  <>
+                    <div className="font-medium">
+                      Danh sách đủ {memberTotal} người — {leftCandidates.length} người không còn trong crew sẽ được đánh dấu &quot;Đã rời crew&quot;:
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-3">
+                      {leftCandidates.map((u) => (
+                        <label key={u} className="flex items-center gap-1.5 font-mono text-xs">
+                          <Checkbox
+                            checked={!keepInCrew.has(u)}
+                            onCheckedChange={(v) =>
+                              setKeepInCrew((prev) => {
+                                const next = new Set(prev);
+                                if (v) next.delete(u);
+                                else next.add(u);
+                                return next;
+                              })
+                            }
+                          />
+                          {u}
+                        </label>
+                      ))}
+                    </div>
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      Bỏ tick nếu người đó vẫn còn trong crew (AI đọc sai tên). Người đã rời vẫn giữ toàn bộ lịch sử; mời lại thì tự kích hoạt lại.
+                    </p>
+                  </>
+                ) : (
+                  <div className="text-warning">
+                    {stats.missing.length} người lần trước có nhưng ảnh này không thấy ({stats.missing.slice(0, 8).join(", ")}
+                    {stats.missing.length > 8 ? "…" : ""}). Vì danh sách chưa đủ / không khớp số &quot;Members&quot; trong game nên hệ thống KHÔNG đánh dấu họ đã rời.
+                  </div>
+                )}
+              </div>
+            )}
             {stats.unverified > 0 && (
               <p className="flex items-center gap-2 text-sm text-warning">
                 <AlertTriangle className="size-4" /> {stats.unverified} dòng chưa xác thực sẽ được lưu nhưng KHÔNG dùng để so sánh / không cập nhật hồ sơ cho đến khi xác thực.

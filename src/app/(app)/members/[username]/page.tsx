@@ -42,6 +42,7 @@ export default async function MemberDetail({ params }: { params: Promise<{ usern
     notes: string | null;
     first_seen_at: string | null;
     last_snapshot_at: string | null;
+    left_at: string | null;
   } | null;
   if (!member) notFound();
 
@@ -134,6 +135,7 @@ export default async function MemberDetail({ params }: { params: Promise<{ usern
             {member.role && <span>· {member.role}</span>}
             {member.level !== null && <span>· Level {member.level}</span>}
             <StatusBadge status={current?.status} />
+            {member.left_at && <span className="rounded-md bg-warning/15 px-2 py-0.5 text-xs font-semibold text-warning">ĐÃ RỜI CREW · {fmtDateTime(member.left_at)}</span>}
           </span>
         }
       />
@@ -302,6 +304,7 @@ export default async function MemberDetail({ params }: { params: Promise<{ usern
             exempt={member.exempt}
             exemptReason={member.exempt_reason}
             notes={member.notes}
+            leftAt={member.left_at}
           />
         </div>
       </div>

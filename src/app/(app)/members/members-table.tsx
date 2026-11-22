@@ -21,6 +21,8 @@ export interface MemberListRow {
   has_notes: boolean;
   last_seen_text: string | null;
   last_snapshot_at: string | null;
+  /** set when the member left / was kicked from the crew */
+  left_at: string | null;
   status: Status | null;
   km_gain: number | null;
   km_exact: boolean | null;
@@ -44,7 +46,7 @@ export interface MemberListRow {
 }
 
 type SortKey = "username" | "km" | "donate" | "violations" | "last" | "level" | "cur_km" | "cur_donated";
-const FILTERS = ["ALL", "PASS", "FAIL", "WARNING", "PENDING", "EXEMPT", "NO_DATA"] as const;
+const FILTERS = ["ALL", "PASS", "FAIL", "WARNING", "PENDING", "EXEMPT", "NO_DATA", "LEFT"] as const;
 
 function Th({
   k,
@@ -76,8 +78,9 @@ export function MembersTable({ rows, pastWeek = false }: { rows: MemberListRow[]
   const [dir, setDir] = useState<1 | -1>(-1);
 
   const counts = useMemo(() => {
-    const c: Record<string, number> = { ALL: rows.length, NO_DATA: 0 };
-    for (const r of rows) {
+    const active = rows.filter((r) => !r.left_at);
+    const c: Record<string, number> = { ALL: active.length, NO_DATA: 0, LEFT: rows.length - active.length };
+    for (const r of active) {
       if (r.status) c[r.status] = (c[r.status] ?? 0) + 1;
       if (r.no_new_data || !r.status) c.NO_DATA++;
     }
@@ -88,6 +91,8 @@ export function MembersTable({ rows, pastWeek = false }: { rows: MemberListRow[]
     const k = q.trim().toLowerCase();
     const filtered = rows.filter((r) => {
       if (k && !r.username.toLowerCase().includes(k) && !r.display_name?.toLowerCase().includes(k)) return false;
+      if (filter === "LEFT") return !!r.left_at;
+      if (r.left_at) return false; // members who left are only listed under "Đã rời crew"
       if (filter === "ALL") return true;
       if (filter === "NO_DATA") return r.no_new_data || !r.status;
       return r.status === filter;
@@ -143,7 +148,7 @@ export function MembersTable({ rows, pastWeek = false }: { rows: MemberListRow[]
                 filter === f ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:text-foreground",
               )}
             >
-              {f === "ALL" ? "Tất cả" : f === "NO_DATA" ? "Chưa có dữ liệu mới" : f} ({counts[f] ?? 0})
+              {f === "ALL" ? "Trong crew" : f === "NO_DATA" ? "Chưa có dữ liệu mới" : f === "LEFT" ? "Đã rời crew" : f} ({counts[f] ?? 0})
             </button>
           ))}
         </div>
@@ -193,6 +198,7 @@ export function MembersTable({ rows, pastWeek = false }: { rows: MemberListRow[]
                         {r.has_notes && <NotebookPen className="size-3.5 text-muted-foreground" aria-label="Có ghi chú" />}
                       </div>
                       {r.display_name && <div className="text-xs text-muted-foreground">{r.display_name}</div>}
+                      {r.left_at && <div className="text-[11px] text-warning">Đã rời crew {timeAgo(r.left_at)}</div>}
                     </Link>
                   </td>
                   <td className="px-4 py-2.5 text-xs">{r.role ?? "—"}</td>

@@ -63,7 +63,7 @@ function Stat({
 
 export default async function DashboardPage() {
   const [memberCount, latestSnap, latest, active, daily, evalHistory] = await Promise.all([
-    db().from("members").select("id", { count: "exact", head: true }),
+    db().from("members").select("id", { count: "exact", head: true }).is("left_at", null),
     db().from("snapshots").select("id, captured_at, uploaded_by, member_count").order("captured_at", { ascending: false }).limit(1).maybeSingle(),
     getLatestEvaluation(),
     getActiveRequirement(),

@@ -31,11 +31,12 @@ export default async function MembersPage({ searchParams }: { searchParams: Prom
       notes: string | null;
       last_seen_text: string | null;
       last_snapshot_at: string | null;
+      left_at: string | null;
     }>(
       (a, b) =>
         db()
           .from("members")
-          .select("id, username, display_name, level, role, exempt, notes, last_seen_text, last_snapshot_at")
+          .select("id, username, display_name, level, role, exempt, notes, last_seen_text, last_snapshot_at, left_at")
           .order("username")
           .range(a, b),
       "Load members",
@@ -162,6 +163,7 @@ export default async function MembersPage({ searchParams }: { searchParams: Prom
       has_notes: !!m.notes,
       last_seen_text: m.last_seen_text,
       last_snapshot_at: m.last_snapshot_at,
+      left_at: m.left_at,
       status: r?.status ?? null,
       km_gain: r?.km_gain === null || r?.km_gain === undefined ? null : Number(r.km_gain),
       km_exact: r?.km_gain_exact ?? null,
@@ -220,7 +222,7 @@ export default async function MembersPage({ searchParams }: { searchParams: Prom
         description={
           latest
             ? latest.period_kind === "daily" && latest.period_start
-              ? `${members.length} thành viên · Trạng thái ngày ${fmtDateTime(latest.period_start)} → ${fmtDateTime(latest.period_end)}${latest.is_final ? " (đã chốt)" : " (đang diễn ra — cột tăng = tiến độ trong ngày)"} · ${latest.requirement_name}`
+              ? `${members.filter((m) => !m.left_at).length} thành viên trong crew · Trạng thái ngày ${fmtDateTime(latest.period_start)} → ${fmtDateTime(latest.period_end)}${latest.is_final ? " (đã chốt)" : " (đang diễn ra — cột tăng = tiến độ trong ngày)"} · ${latest.requirement_name}`
               : `${members.length} thành viên · Trạng thái theo lần đánh giá ${fmtDateTime(latest.to_captured_at)} (${latest.requirement_name})`
             : `${members.length} thành viên · ${isCurrent ? "Chưa có lần đánh giá nào" : "Tuần này không có lần đánh giá nào"}`
         }

@@ -28,6 +28,7 @@ interface MemberRow {
   id: string;
   username: string;
   exempt: boolean;
+  left_at: string | null;
 }
 
 export interface EvaluationSummary {
@@ -158,7 +159,7 @@ async function runDaily(
   if (!anyInside || relevant.length === 0) return { ok: false, reason: "Không có ảnh nào trong ngày này." };
 
   const members = await fetchAll<MemberRow>(
-    (a, b) => db().from("members").select("id, username, exempt").order("id").range(a, b),
+    (a, b) => db().from("members").select("id, username, exempt, left_at").order("id").range(a, b),
     "Load members",
   );
   const startIso = new Date(period.start).toISOString();
@@ -186,6 +187,7 @@ async function runDaily(
   for (const m of members) {
     const points = pointsByMember.get(m.id);
     if (!points || points.length === 0) continue;
+    if (m.left_at && new Date(m.left_at).getTime() <= period.start) continue; // already out of the crew
     const key = usernameKey(m.username);
     const r = evaluateMemberDaily(points, period, now, cfg, settings, {
       exempt: m.exempt || exemptKeys.has(key),
@@ -263,7 +265,7 @@ async function runRolling(set: ActiveSet, settings: Settings, opts: { snapshotId
   );
 
   const members = await fetchAll<MemberRow>(
-    (a, b) => db().from("members").select("id, username, exempt").order("id").range(a, b),
+    (a, b) => db().from("members").select("id, username, exempt, left_at").order("id").range(a, b),
     "Load members",
   );
 
@@ -322,6 +324,7 @@ async function runRolling(set: ActiveSet, settings: Settings, opts: { snapshotId
   for (const m of members) {
     const points = pointsByMember.get(m.id);
     if (!points || points.length === 0) continue; // not seen in the lookback period — left the crew long ago
+    if (m.left_at && new Date(m.left_at).getTime() <= targetMs) continue; // already out of the crew
     const key = usernameKey(m.username);
     const r = evaluateMember(points, target.id, cfg, settings, {
       exempt: m.exempt || exemptKeys.has(key),
