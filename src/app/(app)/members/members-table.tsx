@@ -38,6 +38,9 @@ export interface MemberListRow {
   donated_total: number | null;
   /** no screenshot since the weekly reset yet → race values are 0 */
   new_week_no_data: boolean;
+  /** finished days in the selected week */
+  days_pass: number;
+  days_fail: number;
 }
 
 type SortKey = "username" | "km" | "donate" | "violations" | "last" | "level" | "cur_km" | "cur_donated";
@@ -66,7 +69,7 @@ function Th({
   );
 }
 
-export function MembersTable({ rows }: { rows: MemberListRow[] }) {
+export function MembersTable({ rows, pastWeek = false }: { rows: MemberListRow[]; pastWeek?: boolean }) {
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>("ALL");
   const [sort, setSort] = useState<SortKey>("km");
@@ -163,17 +166,18 @@ export function MembersTable({ rows }: { rows: MemberListRow[] }) {
 
       <Card className="overflow-hidden p-0">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1100px] text-sm">
+          <table className="w-full min-w-[1200px] text-sm">
             <thead className="bg-muted/40 text-xs text-muted-foreground">
               <tr>
                 <Th k="username" active={sort === "username"} onSort={toggleSort}>Thành viên</Th>
                 <th className="px-4 py-2.5 text-left font-medium">Role</th>
                 <Th k="level" right active={sort === "level"} onSort={toggleSort}>Level</Th>
-                <Th k="cur_km" right active={sort === "cur_km"} onSort={toggleSort}>KM tuần này</Th>
+                <Th k="cur_km" right active={sort === "cur_km"} onSort={toggleSort}>{pastWeek ? "KM cuối tuần" : "KM tuần này"}</Th>
                 <Th k="cur_donated" right active={sort === "cur_donated"} onSort={toggleSort}>Donated</Th>
                 <Th k="km" right active={sort === "km"} onSort={toggleSort}>KM tăng</Th>
                 <Th k="donate" right active={sort === "donate"} onSort={toggleSort}>Donate tăng</Th>
                 <th className="px-4 py-2.5 text-left font-medium">Trạng thái</th>
+                <th className="px-4 py-2.5 text-right font-medium" title="Số ngày đã chốt trong tuần: đạt / trượt">Ngày đạt / trượt</th>
                 <Th k="violations" right active={sort === "violations"} onSort={toggleSort}>Vi phạm</Th>
                 <Th k="last" active={sort === "last"} onSort={toggleSort}>Hoạt động gần nhất</Th>
               </tr>
@@ -208,6 +212,11 @@ export function MembersTable({ rows }: { rows: MemberListRow[] }) {
                       {r.reason && r.status !== "PASS" && <span className="text-[11px] text-muted-foreground">{r.reason}</span>}
                     </div>
                   </td>
+                  <td className="px-4 py-2.5 text-right tabular text-xs">
+                    <span className="text-success">{r.days_pass}</span>
+                    <span className="text-muted-foreground"> / </span>
+                    <span className={r.days_fail ? "text-destructive" : "text-muted-foreground"}>{r.days_fail}</span>
+                  </td>
                   <td className="px-4 py-2.5 text-right tabular">
                     {r.violations > 0 ? (
                       <span className="text-destructive">
@@ -226,7 +235,7 @@ export function MembersTable({ rows }: { rows: MemberListRow[] }) {
               ))}
               {list.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="px-4 py-12 text-center text-muted-foreground">
+                  <td colSpan={11} className="px-4 py-12 text-center text-muted-foreground">
                     Không có thành viên phù hợp.
                   </td>
                 </tr>

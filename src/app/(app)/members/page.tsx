@@ -1,11 +1,16 @@
+import Link from "next/link";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { PageHeader } from "@/components/app/page-header";
-import { db } from "@/lib/server/supabase";
+import { buttonVariants } from "@/components/ui/button";
+import { db, must } from "@/lib/server/supabase";
 import { fetchAll } from "@/lib/server/fetch-all";
-import { getLatestEvaluation, type ResultRow } from "@/lib/server/evaluation";
+import { getLatestEvaluation, type EvaluationRow, type ResultRow } from "@/lib/server/evaluation";
 import { fmtDateTime } from "@/lib/format";
+import { cn } from "@/lib/utils";
 import { MembersTable, type MemberListRow } from "./members-table";
 import { getSettings } from "@/lib/server/settings";
 import { currentRaceWeek, weekContribution, type ContributionPoint } from "@/lib/engine/race";
+import { WEEK_MS } from "@/lib/engine/week";
 
 function nowMs() {
   return Date.now();
@@ -13,8 +18,9 @@ function nowMs() {
 
 export const metadata = { title: "Members · Crew Manager" };
 
-export default async function MembersPage() {
-  const [members, latest, fails, current, settings, lastReset] = await Promise.all([
+export default async function MembersPage({ searchParams }: { searchParams: Promise<{ week?: string }> }) {
+  const sp = await searchParams;
+  const [members, fails, current, settings, lastReset, firstSnap] = await Promise.all([
     fetchAll<{
       id: string;
       username: string;
@@ -34,7 +40,6 @@ export default async function MembersPage() {
           .range(a, b),
       "Load members",
     ),
-    getLatestEvaluation(),
     fetchAll<{ member_id: string }>(
       (a, b) =>
         db()
@@ -46,7 +51,7 @@ export default async function MembersPage() {
           .range(a, b),
       "Load violations",
     ),
-    // latest verified values per member = what they have contributed so far (KM this week, total Donated)
+    // every verified value — used to compute what each member contributed in the selected race week
     fetchAll<{ member_id: string; weekly_km: number | null; donated: number | null; snapshots: { captured_at: string; donate_type: string } }>(
       (a, b) =>
         db()
@@ -55,7 +60,7 @@ export default async function MembersPage() {
           .eq("verified", true)
           .order("id")
           .range(a, b),
-      "Load current values",
+      "Load values",
     ),
     getSettings(),
     db()
@@ -65,12 +70,22 @@ export default async function MembersPage() {
       .order("captured_at", { ascending: false })
       .limit(1)
       .maybeSingle(),
+    db().from("snapshots").select("captured_at").order("captured_at").limit(1).maybeSingle(),
   ]);
 
-  // the weekly race restarts at every reset: contributions are counted from the start of the current week
-  const week = currentRaceWeek(nowMs(), (lastReset.data?.next_reset_at as string | undefined) ?? null, settings);
+  // ---- which race week to show (0 = current, 1 = last week, …) ----
+  const now = nowMs();
+  const thisWeek = currentRaceWeek(now, (lastReset.data?.next_reset_at as string | undefined) ?? null, settings);
+  const firstMs = firstSnap.data?.captured_at ? new Date(firstSnap.data.captured_at as string).getTime() : now;
+  const maxBack = Math.max(0, Math.ceil((thisWeek.start - firstMs) / WEEK_MS));
+  const back = Math.min(maxBack, Math.max(0, Math.floor(Number(sp.week) || 0)));
+  const week = { start: thisWeek.start - back * WEEK_MS, end: thisWeek.end - back * WEEK_MS };
+  const isCurrent = back === 0;
+
+  // ---- contributions in that week (only screenshots taken before the week ended) ----
   const pointsBy = new Map<string, ContributionPoint[]>();
   for (const c of current) {
+    if (new Date(c.snapshots.captured_at).getTime() > week.end) continue;
     const list = pointsBy.get(c.member_id) ?? [];
     list.push({
       captured_at: c.snapshots.captured_at,
@@ -82,18 +97,61 @@ export default async function MembersPage() {
   }
   const contributionBy = new Map([...pointsBy].map(([id, pts]) => [id, weekContribution(pts, week.start)]));
 
-  const results = latest
-    ? await fetchAll<ResultRow>(
-        (a, b) => db().from("evaluation_results").select("*").eq("evaluation_id", latest.id).order("id").range(a, b),
-        "Load results",
-      )
-    : [];
+  // ---- status: current evaluation, or the last one of the selected past week ----
+  const startIso = new Date(week.start).toISOString();
+  const endIso = new Date(week.end).toISOString();
+  const latest = isCurrent
+    ? await getLatestEvaluation()
+    : (must(
+        await db()
+          .from("evaluations")
+          .select("*")
+          .eq("superseded", false)
+          .lte("period_end", endIso)
+          .gte("period_end", startIso)
+          .order("period_end", { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+        "Load week evaluation",
+      ) as EvaluationRow | null);
+
+  const [results, dayResults] = await Promise.all([
+    latest
+      ? fetchAll<ResultRow>((a, b) => db().from("evaluation_results").select("*").eq("evaluation_id", latest.id).order("id").range(a, b), "Load results")
+      : Promise.resolve([] as ResultRow[]),
+    // finished days of this week → number of days passed / failed per member
+    fetchAll<{ member_id: string; status: string }>(
+      (a, b) =>
+        db()
+          .from("evaluation_results")
+          .select("member_id, status, evaluations!inner(superseded, period_kind, is_final, period_start)")
+          .eq("evaluations.superseded", false)
+          .eq("evaluations.period_kind", "daily")
+          .eq("evaluations.is_final", true)
+          .gte("evaluations.period_start", startIso)
+          .lt("evaluations.period_start", endIso)
+          .order("id")
+          .range(a, b),
+      "Load daily results",
+    ),
+  ]);
+  const days = new Map<string, { pass: number; fail: number }>();
+  for (const d of dayResults) {
+    const cur = days.get(d.member_id) ?? { pass: 0, fail: 0 };
+    if (d.status === "PASS" || d.status === "EXEMPT") cur.pass++;
+    if (d.status === "FAIL" || d.status === "WARNING") cur.fail++;
+    days.set(d.member_id, cur);
+  }
+
   const byMember = new Map(results.map((r) => [r.member_id, r]));
   const violationCount = new Map<string, number>();
   for (const f of fails) violationCount.set(f.member_id, (violationCount.get(f.member_id) ?? 0) + 1);
 
   const rows: MemberListRow[] = members.map((m) => {
     const r = byMember.get(m.id);
+    const c = contributionBy.get(m.id);
+    // for a past week, a member without any screenshot in that week has no data for it
+    const absentPastWeek = !isCurrent && (!c || c.newWeekNoData);
     return {
       id: m.id,
       username: m.username,
@@ -113,36 +171,61 @@ export default async function MembersPage() {
       no_new_data: !!r?.flags?.includes("no_new_data"),
       consecutive: r?.consecutive_fails ?? 0,
       violations: violationCount.get(m.id) ?? 0,
-      current_km: contributionBy.get(m.id)?.km ?? null,
-      current_donated: contributionBy.get(m.id)?.donate ?? null,
-      donate_approx: contributionBy.get(m.id)?.donateApprox ?? false,
-      donate_since_first: contributionBy.get(m.id)?.donateSinceFirst ?? false,
-      donated_total: contributionBy.get(m.id)?.donatedTotal ?? null,
-      new_week_no_data: contributionBy.get(m.id)?.newWeekNoData ?? false,
+      current_km: absentPastWeek ? null : (c?.km ?? null),
+      current_donated: absentPastWeek ? null : (c?.donate ?? null),
+      donate_approx: c?.donateApprox ?? false,
+      donate_since_first: c?.donateSinceFirst ?? false,
+      donated_total: absentPastWeek ? null : (c?.donatedTotal ?? null),
+      new_week_no_data: isCurrent && (c?.newWeekNoData ?? false),
+      days_pass: days.get(m.id)?.pass ?? 0,
+      days_fail: days.get(m.id)?.fail ?? 0,
     };
   });
+
+  const weekLabel = back === 0 ? "Tuần đua hiện tại" : back === 1 ? "Tuần trước" : `${back} tuần trước`;
 
   return (
     <>
       <PageHeader
         title="Members"
         actions={
-          <div className="rounded-lg border bg-card px-3 py-2 text-xs">
-            <div className="text-muted-foreground">Tuần đua hiện tại{week.fromCountdown ? " (theo đồng hồ trong game)" : " (theo Settings)"}</div>
-            <div className="font-medium">
-              {fmtDateTime(new Date(week.start).toISOString())} → {fmtDateTime(new Date(week.end).toISOString())}
+          <div className="flex items-center gap-2">
+            <Link
+              href={`/members?week=${back + 1}`}
+              aria-disabled={back >= maxBack}
+              className={cn(buttonVariants({ variant: "outline", size: "icon" }), back >= maxBack && "pointer-events-none opacity-40")}
+              title="Tuần trước"
+            >
+              <ChevronLeft />
+            </Link>
+            <div className="rounded-lg border bg-card px-3 py-2 text-xs">
+              <div className="text-muted-foreground">
+                {weekLabel}
+                {thisWeek.fromCountdown ? " (theo đồng hồ trong game)" : " (theo Settings)"}
+              </div>
+              <div className="font-medium">
+                {fmtDateTime(startIso)} → {fmtDateTime(endIso)}
+              </div>
             </div>
+            <Link
+              href={back - 1 <= 0 ? "/members" : `/members?week=${back - 1}`}
+              aria-disabled={isCurrent}
+              className={cn(buttonVariants({ variant: "outline", size: "icon" }), isCurrent && "pointer-events-none opacity-40")}
+              title="Tuần sau"
+            >
+              <ChevronRight />
+            </Link>
           </div>
         }
         description={
           latest
             ? latest.period_kind === "daily" && latest.period_start
-              ? `${members.length} thành viên · Kết quả ngày ${fmtDateTime(latest.period_start)} → ${fmtDateTime(latest.period_end)}${latest.is_final ? " (đã chốt)" : " (đang diễn ra — cột tăng = tiến độ trong ngày)"} · ${latest.requirement_name}`
+              ? `${members.length} thành viên · Trạng thái ngày ${fmtDateTime(latest.period_start)} → ${fmtDateTime(latest.period_end)}${latest.is_final ? " (đã chốt)" : " (đang diễn ra — cột tăng = tiến độ trong ngày)"} · ${latest.requirement_name}`
               : `${members.length} thành viên · Trạng thái theo lần đánh giá ${fmtDateTime(latest.to_captured_at)} (${latest.requirement_name})`
-            : `${members.length} thành viên · Chưa có lần đánh giá nào`
+            : `${members.length} thành viên · ${isCurrent ? "Chưa có lần đánh giá nào" : "Tuần này không có lần đánh giá nào"}`
         }
       />
-      <MembersTable rows={rows} />
+      <MembersTable rows={rows} pastWeek={!isCurrent} />
     </>
   );
 }
