@@ -1,9 +1,9 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState, useTransition } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { AlertTriangle, CheckCircle2, ImagePlus, Loader2, Plus, ScanText, Trash2, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ClipboardPaste, ImagePlus, Loader2, Plus, ScanText, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -172,7 +172,10 @@ export function UploadClient({
   }, [knownMembers]);
 
   const addFiles = useCallback((files: FileList | File[]) => {
-    const list = Array.from(files).filter((f) => /^image\/(png|jpe?g)$/.test(f.type));
+    const list = Array.from(files)
+      .filter((f) => /^image\/(png|jpe?g)$/.test(f.type))
+      // pasted screenshots are all called "image.png" — give them a unique, readable name
+      .map((f) => (/^image\.(png|jpe?g)$/i.test(f.name) || !f.name ? new File([f], `dan-anh-${Date.now()}-${uid()}.${f.type === "image/png" ? "png" : "jpg"}`, { type: f.type }) : f));
     if (list.length === 0) {
       toast.error("Chỉ hỗ trợ ảnh PNG, JPG, JPEG");
       return;
@@ -182,6 +185,43 @@ export function UploadClient({
       ...list.map((file) => ({ id: uid(), file, url: URL.createObjectURL(file), status: "idle" as const })),
     ]);
   }, []);
+
+  // paste a screenshot anywhere on the page (Ctrl+V / Cmd+V)
+  useEffect(() => {
+    function onPaste(e: ClipboardEvent) {
+      const files = Array.from(e.clipboardData?.files ?? []).filter((f) => f.type.startsWith("image/"));
+      if (files.length === 0) return; // plain text paste into an input keeps working
+      e.preventDefault();
+      addFiles(files);
+      toast.success(`Đã dán ${files.length} ảnh`);
+    }
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  }, [addFiles]);
+
+  /** "Dán ảnh" button — reads an image from the clipboard (useful on phones / tablets). */
+  async function pasteFromClipboard() {
+    try {
+      if (!navigator.clipboard?.read) throw new Error("unsupported");
+      const items = await navigator.clipboard.read();
+      const files: File[] = [];
+      for (const item of items) {
+        const type = item.types.find((t) => t === "image/png" || t === "image/jpeg");
+        if (type) {
+          const blob = await item.getType(type);
+          files.push(new File([blob], "image.png", { type }));
+        }
+      }
+      if (files.length === 0) {
+        toast.info("Bộ nhớ tạm chưa có ảnh. Hãy chụp màn hình / sao chép ảnh rồi bấm lại.");
+        return;
+      }
+      addFiles(files);
+      toast.success(`Đã dán ${files.length} ảnh`);
+    } catch {
+      toast.error("Trình duyệt không cho đọc ảnh từ bộ nhớ tạm. Hãy bấm Ctrl+V (máy tính) hoặc chọn ảnh từ thư viện.");
+    }
+  }
 
   function removeImage(id: string) {
     setImages((prev) => {
@@ -501,8 +541,8 @@ export function UploadClient({
             )}
           >
             <ImagePlus className="size-8 text-muted-foreground" />
-            <div className="text-sm font-medium">Kéo thả ảnh vào đây hoặc bấm để chọn</div>
-            <div className="text-xs text-muted-foreground">Ảnh lớn sẽ được tự động nén trước khi gửi</div>
+            <div className="text-sm font-medium">Dán ảnh (Ctrl+V), kéo thả, hoặc bấm để chọn</div>
+            <div className="text-xs text-muted-foreground">Chụp màn hình xong bấm Ctrl+V ở trang này là xong · Ảnh lớn sẽ được tự động nén</div>
             <input
               ref={inputRef}
               type="file"
@@ -555,6 +595,9 @@ export function UploadClient({
             <Button onClick={scan} disabled={scanning || images.length === 0}>
               {scanning ? <Loader2 className="animate-spin" /> : <ScanText />}
               {scanning ? "Đang quét OCR…" : "Quét OCR"}
+            </Button>
+            <Button variant="outline" onClick={pasteFromClipboard} disabled={scanning}>
+              <ClipboardPaste /> Dán ảnh
             </Button>
             {rows.length === 0 && (
               <Button variant="outline" onClick={addManualRow} disabled={scanning}>
