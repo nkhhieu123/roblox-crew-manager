@@ -344,13 +344,24 @@ export function evaluateMemberDaily(
 
   let lowKm: Gain = { value: null, exact: false, flags: [] };
   let lowDon: Gain = { value: null, exact: false, flags: [] };
+  // a member whose very first screenshot falls inside this day joined the crew today:
+  // their race starts at 0 from that moment
+  const joinedToday = !!sorted[0] && t(sorted[0]) >= period.start && t(sorted[0]) <= period.end;
   if (lowChain) {
     lowKm = kmGain(lowChain, settings);
     lowDon = donateGain(lowChain, settings);
-    if (!fullyCovered) {
+    if (!fullyCovered && !joinedToday) {
       lowKm = { ...lowKm, exact: false };
       lowDon = { ...lowDon, exact: false };
     }
+  } else if (inside.length > 0) {
+    // only one screenshot so far today: nothing gained yet that we can measure → 0
+    lowKm = { value: 0, exact: joinedToday, flags: [] };
+    lowDon = { value: 0, exact: joinedToday, flags: [] };
+    base.from_snapshot_id = inside[0].snapshot_id;
+    base.from_captured_at = inside[0].captured_at;
+    base.to_captured_at = inside[0].captured_at;
+    base.hours = 0;
   }
   base.km = lowKm;
   base.donate = lowDon;
@@ -370,8 +381,11 @@ export function evaluateMemberDaily(
     return {
       ...base,
       status: "PENDING",
-      reason_summary: lowChain ? `Đang trong ngày — còn ${fmt(hoursLeft, 1)} giờ` : "Chưa đủ ảnh trong ngày để tính",
-      reasons: lowChain ? reasons : ["Cần ít nhất 2 ảnh trong ngày (hoặc 1 ảnh gần 0 giờ + 1 ảnh trong ngày)"],
+      reason_summary:
+        lowChain || inside.length > 0
+          ? `${joinedToday ? "Thành viên mới — tính từ lúc vào crew · " : ""}Đang trong ngày — còn ${fmt(hoursLeft, 1)} giờ`
+          : "Chưa đủ ảnh trong ngày để tính",
+      reasons: lowChain || inside.length > 0 ? reasons : ["Cần ít nhất 2 ảnh trong ngày (hoặc 1 ảnh gần 0 giờ + 1 ảnh trong ngày)"],
       flags: [...flags, "in_progress"],
     };
   }

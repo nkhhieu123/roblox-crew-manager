@@ -383,6 +383,13 @@ describe("daily periods (00:00 → 00:00 Vietnam time)", () => {
     expect(r.reason_summary).toContain("Đang trong ngày");
   });
 
+  it("a member who joined today starts at 0 (not 'unknown')", () => {
+    const r = evaluateMemberDaily([pt2("n", "2026-11-19T10:00:00Z", 5000, 0)], day, Date.parse("2026-11-19T11:00:00Z"), D, SS);
+    expect(r.km).toEqual({ value: 0, exact: true, flags: [] });
+    expect(r.donate.value).toBe(0);
+    expect(r.reason_summary).toContain("Thành viên mới");
+  });
+
   it("passes as soon as the requirement is met during the day", () => {
     const r = evaluateMemberDaily([pt2("a", "2026-11-19T04:33:00Z", 0, 0), pt2("b", "2026-11-19T09:00:00Z", 120000, 0)], day, Date.parse("2026-11-19T10:00:00Z"), D, SS);
     expect(r.status).toBe("PASS");
