@@ -102,7 +102,7 @@ export function MembersTable({ rows }: { rows: MemberListRow[] }) {
         case "cur_km":
           return r.current_km ?? -Infinity;
         case "cur_donated":
-          return r.current_donated ?? -Infinity;
+          return r.donated_total ?? -Infinity;
         case "level":
           return r.level ?? -Infinity;
         case "last":
@@ -150,7 +150,7 @@ export function MembersTable({ rows }: { rows: MemberListRow[] }) {
           setDir(Number(d) as 1 | -1);
         }} className="ml-auto">
           <option value="cur_km:-1">KM tuần này cao nhất</option>
-          <option value="cur_donated:-1">Donate tuần này nhiều nhất</option>
+          <option value="cur_donated:-1">Donated nhiều nhất</option>
           <option value="km:-1">KM tăng nhiều nhất</option>
           <option value="km:1">KM tăng ít nhất</option>
           <option value="donate:-1">Donate tăng nhiều nhất</option>
@@ -170,7 +170,7 @@ export function MembersTable({ rows }: { rows: MemberListRow[] }) {
                 <th className="px-4 py-2.5 text-left font-medium">Role</th>
                 <Th k="level" right active={sort === "level"} onSort={toggleSort}>Level</Th>
                 <Th k="cur_km" right active={sort === "cur_km"} onSort={toggleSort}>KM tuần này</Th>
-                <Th k="cur_donated" right active={sort === "cur_donated"} onSort={toggleSort}>Donate tuần này</Th>
+                <Th k="cur_donated" right active={sort === "cur_donated"} onSort={toggleSort}>Donated</Th>
                 <Th k="km" right active={sort === "km"} onSort={toggleSort}>KM tăng</Th>
                 <Th k="donate" right active={sort === "donate"} onSort={toggleSort}>Donate tăng</Th>
                 <th className="px-4 py-2.5 text-left font-medium">Trạng thái</th>
@@ -197,21 +197,8 @@ export function MembersTable({ rows }: { rows: MemberListRow[] }) {
                     {fmtNum(r.current_km)}
                     {r.new_week_no_data && <div className="text-[10px] font-normal text-muted-foreground">tuần mới – chờ ảnh</div>}
                   </td>
-                  <td
-                    className="px-4 py-2.5 text-right tabular font-medium"
-                    title={r.donated_total !== null ? `Tổng Donated tích lũy: ${fmtNum(r.donated_total)}` : undefined}
-                  >
-                    {r.current_donated === null ? (
-                      <span className="text-xs font-normal text-muted-foreground" title="Chưa có ảnh trước mốc reset để làm mốc">Chưa có mốc</span>
-                    ) : (
-                      <>
-                        <span title={r.donate_since_first ? "Tính từ ảnh đầu tiên trong tuần (chưa có ảnh trước mốc reset) — số thật có thể cao hơn" : undefined}>
-                          {r.donate_since_first ? "≥ " : r.donate_approx ? "≈ " : ""}
-                        </span>
-                        {fmtNum(r.current_donated)}
-                      </>
-                    )}
-                    {r.donated_total !== null && <div className="text-[10px] font-normal text-muted-foreground">tổng {fmtNum(r.donated_total)}</div>}
+                  <td className="px-4 py-2.5 text-right tabular font-medium" title="Số Donated đọc từ ảnh mới nhất">
+                    {fmtNum(r.donated_total)}
                   </td>
                   <td className="px-4 py-2.5 text-right tabular">{r.status ? fmtGain(r.km_gain, r.km_exact) : "—"}</td>
                   <td className="px-4 py-2.5 text-right tabular">{r.status ? fmtGain(r.donate_gain, r.donate_exact) : "—"}</td>
