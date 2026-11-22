@@ -27,6 +27,7 @@ const ACTION_LABEL: Record<string, string> = {
   "member.merge": "Gộp thành viên",
   "member.delete": "Xóa thành viên",
   "member.left": "Đánh dấu rời crew",
+  "images.purge": "Tự xóa ảnh gốc cũ",
   "member.rejoined": "Đưa trở lại crew",
   "violation.resolve": "Xử lý vi phạm",
   "violation.reopen": "Mở lại vi phạm",

@@ -93,6 +93,14 @@ export function SettingsForm({ initial }: { initial: GeneralSettings }) {
           </span>
         </label>
 
+        <div className="space-y-2">
+          <Label htmlFor="ret">Tự xóa ảnh gốc sau (ngày)</Label>
+          <Input id="ret" type="number" min={0} value={s.image_retention_days} onChange={(e) => set("image_retention_days", Number(e.target.value))} className="w-28" />
+          <p className="text-xs text-muted-foreground">
+            Chỉ xóa ảnh để tiết kiệm dung lượng (gói miễn phí 1 GB); mọi số liệu và kết quả vẫn giữ vĩnh viễn. 0 = giữ ảnh mãi.
+          </p>
+        </div>
+
         <label className="flex items-center gap-3 text-sm">
           <Switch checked={s.store_images} onCheckedChange={(v) => set("store_images", v)} />
           Lưu ảnh gốc vào Supabase Storage

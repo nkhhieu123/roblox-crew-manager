@@ -22,6 +22,7 @@ const schema = z.object({
   baseline_tolerance_pct: z.number().min(0).max(50),
   day_edge_tolerance_min: z.number().int().min(0).max(240),
   force_daily_verdict: z.boolean(),
+  image_retention_days: z.number().int().min(0).max(3650),
 });
 
 export async function updateSettings(input: z.infer<typeof schema>) {

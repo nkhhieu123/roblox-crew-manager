@@ -23,6 +23,8 @@ export interface GeneralSettings {
    * using the best data available (estimate at 00:00, else the part of the day that was measured).
    */
   force_daily_verdict: boolean;
+  /** Original screenshots older than this many days are deleted (numbers are kept). 0 = keep forever. */
+  image_retention_days: number;
 }
 
 export const DEFAULT_SETTINGS: GeneralSettings = {
@@ -34,6 +36,7 @@ export const DEFAULT_SETTINGS: GeneralSettings = {
   baseline_tolerance_pct: 15,
   day_edge_tolerance_min: 60,
   force_daily_verdict: true,
+  image_retention_days: 14,
 };
 
 // ---------- Requirement configuration ----------

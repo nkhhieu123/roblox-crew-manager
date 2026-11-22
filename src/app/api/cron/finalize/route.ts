@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { timingSafeEqual } from "node:crypto";
 import { runEvaluation } from "@/lib/server/evaluation";
+import { purgeOldImages } from "@/lib/server/retention";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -19,7 +20,8 @@ export async function GET(req: Request) {
 
   try {
     const r = await runEvaluation({ actor: "system (tự chốt 0h)", trigger: "auto" });
-    return NextResponse.json(r.ok ? { ok: true, summary: r.summary } : { ok: false, reason: r.reason });
+    const purged = await purgeOldImages().catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
+    return NextResponse.json(r.ok ? { ok: true, summary: r.summary, purged } : { ok: false, reason: r.reason, purged });
   } catch (e) {
     return NextResponse.json({ ok: false, error: e instanceof Error ? e.message : String(e) }, { status: 500 });
   }
