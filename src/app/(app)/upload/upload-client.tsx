@@ -413,6 +413,11 @@ export function UploadClient({
               {scanning ? <Loader2 className="animate-spin" /> : <ScanText />}
               {scanning ? "Đang quét OCR…" : "Quét OCR"}
             </Button>
+            {rows.length === 0 && (
+              <Button variant="outline" onClick={addManualRow} disabled={scanning}>
+                <Plus /> Nhập thủ công
+              </Button>
+            )}
             {scanning && <span className="text-sm text-muted-foreground">AI đang đọc từng ảnh, vui lòng chờ…</span>}
           </div>
         </CardContent>

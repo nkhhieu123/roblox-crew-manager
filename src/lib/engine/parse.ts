@@ -11,7 +11,9 @@ export function parseNumber(input: unknown): number | null {
 
   // remove units / currency / spaces
   s = s.replace(/kms?|robux|rbx|r\$|donated|donate/g, "");
-  s = s.replace(/[^\d.,kmb+-]/g, "");
+  s = s.replace(/[\s $€£¥]/g, "");
+  // any other unexpected character (e.g. "1,2?0", "1O0") means the value was not read reliably
+  if (/[^\d.,kmb+-]/.test(s)) return null;
 
   let mult = 1;
   const suffix = s.match(/([kmb])\+?$/);
