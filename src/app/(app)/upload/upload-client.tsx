@@ -171,6 +171,24 @@ export function UploadClient({
     return map;
   }, [knownMembers]);
 
+  /**
+   * OCR often misreads one or two letters of the tiny "@username" (a/o, v/y, i/j…). If the username is not a
+   * known member but a known member has the SAME display name and a username at most 2 edits away, it is the
+   * same person: use the known username.
+   */
+  const correctUsername = useCallback(
+    (username: string, displayName: string | null): string | null => {
+      const k = usernameKey(username);
+      if (!k || known.has(k) || !displayName?.trim()) return null;
+      const d = displayName.trim().toLowerCase();
+      const candidates = knownMembers.filter(
+        (m) => (m.display_name ?? "").trim().toLowerCase() === d && levenshtein(usernameKey(m.username), k) <= 2,
+      );
+      return candidates.length === 1 ? candidates[0].username : null;
+    },
+    [known, knownMembers],
+  );
+
   const addFiles = useCallback((files: FileList | File[]) => {
     const list = Array.from(files)
       .filter((f) => /^image\/(png|jpe?g)$/.test(f.type))
@@ -304,9 +322,14 @@ export function UploadClient({
           }
           continue;
         }
+        const corrected = r.username ? correctUsername(r.username, r.display_name) : null;
+        if (corrected) {
+          const ci = next.findIndex((x) => usernameKey(x.username) === usernameKey(corrected));
+          if (ci >= 0) continue; // already present under the correct username
+        }
         next.push({
           id: uid(),
-          username: r.username,
+          username: corrected ?? r.username,
           display_name: r.display_name ?? "",
           level: str(r.level),
           role: r.role ?? "",
@@ -315,7 +338,9 @@ export function UploadClient({
           last_seen_text: r.last_seen_text ?? "",
           needs_review: r.needs_review,
           verified: !r.needs_review,
-          review_notes: r.review_notes ?? "",
+          review_notes: [r.review_notes, corrected ? `Tự sửa Username: AI đọc "${r.username}" → dùng "${corrected}" (cùng tên hiển thị)` : null]
+            .filter(Boolean)
+            .join("; "),
           imageIndex,
           raw: r.raw,
         });
@@ -453,9 +478,14 @@ export function UploadClient({
 
   const stats = useMemo(() => {
     const unverified = rows.filter((r) => !r.verified).length;
-    const newMembers = rows.filter((r) => r.username && !known.has(usernameKey(r.username))).length;
-    return { total: rows.length, unverified, newMembers };
-  }, [rows, known]);
+    const newNames = rows.filter((r) => r.username && !known.has(usernameKey(r.username))).map((r) => r.username);
+    const present = new Set(rows.map((r) => usernameKey(r.username)));
+    // members seen in the last snapshot (have previous values) but not in this scan
+    const missing = Object.keys(previous)
+      .filter((k) => !present.has(k))
+      .map((k) => known.get(k) ?? k);
+    return { total: rows.length, unverified, newMembers: newNames.length, newNames, missing };
+  }, [rows, known, previous]);
 
   function save() {
     // validate numbers
@@ -625,7 +655,16 @@ export function UploadClient({
               <span className={cn("rounded-md px-2 py-1", stats.unverified ? "bg-warning/15 text-warning" : "bg-success/15 text-success")}>
                 {stats.unverified} chưa xác thực
               </span>
-              <span className="rounded-md bg-info/15 px-2 py-1 text-info">{stats.newMembers} thành viên mới</span>
+              <span className="rounded-md bg-info/15 px-2 py-1 text-info" title={stats.newNames.join(", ")}>
+                {stats.newMembers} thành viên mới{stats.newMembers > 0 && stats.newMembers <= 5 ? `: ${stats.newNames.join(", ")}` : ""}
+              </span>
+              {stats.missing.length > 0 && rows.length > 0 && (
+                <span className="rounded-md bg-warning/15 px-2 py-1 text-warning" title={stats.missing.join(", ")}>
+                  {stats.missing.length} người lần trước có nhưng giờ không thấy
+                  {stats.missing.length <= 5 ? `: ${stats.missing.join(", ")}` : ""}
+                  {stats.newMembers > 0 ? " — có thể AI đọc sai Username, hãy so với cột Mới" : ""}
+                </span>
+              )}
               {memberTotal !== null && (
                 <span className={cn("rounded-md px-2 py-1", memberTotal === stats.total ? "bg-success/15 text-success" : "bg-destructive/15 text-destructive")}>
                   {memberTotal === stats.total
