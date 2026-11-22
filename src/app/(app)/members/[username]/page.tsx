@@ -9,7 +9,7 @@ import { fetchAll } from "@/lib/server/fetch-all";
 import { getSettings } from "@/lib/server/settings";
 import { usernameKey } from "@/lib/engine/parse";
 import { resetBetween } from "@/lib/engine/week";
-import { fmtDateTime, fmtGain, fmtHours, fmtNum } from "@/lib/format";
+import { fmtDate, fmtDateTime, fmtHours, fmtNum } from "@/lib/format";
 import type { ResultRow } from "@/lib/server/evaluation";
 import { MemberHistoryChart } from "./history-chart";
 import { MemberProfileActions } from "./profile-actions";
@@ -57,11 +57,11 @@ export default async function MemberDetail({ params }: { params: Promise<{ usern
           .range(a, b),
       "Load history",
     ),
-    fetchAll<ResultRow & { evaluations: { requirement_name: string; superseded: boolean } }>(
+    fetchAll<ResultRow & { evaluations: { requirement_name: string; superseded: boolean; period_kind: string; period_start: string | null; is_final: boolean } }>(
       (a, b) =>
         db()
           .from("evaluation_results")
-          .select("*, evaluations!inner(requirement_name, superseded)")
+          .select("*, evaluations!inner(requirement_name, superseded, period_kind, period_start, is_final)")
           .eq("member_id", member.id)
           .order("created_at", { ascending: false })
           .range(a, b),
@@ -119,8 +119,19 @@ export default async function MemberDetail({ params }: { params: Promise<{ usern
     .filter((e) => e.verified)
     .map((e) => ({ t: e.snapshots.captured_at, km: e.weekly_km, donated: e.donated }));
   const current = results.find((r) => !r.evaluations.superseded);
-  const activeResults = results.filter((r) => !r.evaluations.superseded);
-  const violations = activeResults.filter((r) => r.status === "FAIL");
+  // violation history: current (not replaced) results of finished days that FAILED / were close (WARNING),
+  // one row per day
+  const byDay = new Map<string, (typeof results)[number]>();
+  for (const r of results) {
+    if (r.evaluations.superseded || !r.evaluations.is_final) continue;
+    if (r.status !== "FAIL" && r.status !== "WARNING") continue;
+    const key = r.evaluations.period_start ?? r.to_captured_at ?? r.id;
+    if (!byDay.has(key)) byDay.set(key, r);
+  }
+  const violationDays = [...byDay.values()].sort((a, b) =>
+    (b.evaluations.period_start ?? b.created_at).localeCompare(a.evaluations.period_start ?? a.created_at),
+  );
+  const violations = violationDays.filter((r) => r.status === "FAIL");
 
   return (
     <>
@@ -205,66 +216,51 @@ export default async function MemberDetail({ params }: { params: Promise<{ usern
             </div>
           </Card>
 
-          <Card className="overflow-hidden p-0">
-            <CardHeader className="px-4 pt-4">
-              <CardTitle className="text-base">Lịch sử đánh giá ({violations.length} lần vi phạm)</CardTitle>
-            </CardHeader>
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[760px] text-sm">
-                <thead className="bg-muted/40 text-xs text-muted-foreground">
-                  <tr>
-                    <th className="px-4 py-2 text-left font-medium">Thời điểm</th>
-                    <th className="px-4 py-2 text-left font-medium">Trạng thái</th>
-                    <th className="px-4 py-2 text-right font-medium">KM tăng / yêu cầu</th>
-                    <th className="px-4 py-2 text-right font-medium">Donate tăng / yêu cầu</th>
-                    <th className="px-4 py-2 text-left font-medium">Lý do</th>
-                    <th className="px-4 py-2 text-left font-medium">Bộ điều kiện</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {results.map((r) => (
-                    <tr key={r.id} className={`border-t align-top ${r.evaluations.superseded ? "opacity-50" : ""}`}>
-                      <td className="px-4 py-2 text-xs">
-                        {fmtDateTime(r.to_captured_at ?? r.created_at)}
-                        <div className="text-muted-foreground">{r.hours ? `trong ${fmtHours(r.hours)}` : ""}</div>
-                      </td>
-                      <td className="px-4 py-2">
-                        <StatusBadge status={r.status} />
-                        {r.resolved && <div className="mt-1 text-[11px] text-success">Đã xử lý</div>}
-                      </td>
-                      <td className="px-4 py-2 text-right tabular text-xs">
-                        {fmtGain(r.km_gain, r.km_gain_exact)} / {fmtNum(r.km_required)}
-                      </td>
-                      <td className="px-4 py-2 text-right tabular text-xs">
-                        {fmtGain(r.donate_gain, r.donate_gain_exact)} / {fmtNum(r.donate_required)}
-                      </td>
-                      <td className="px-4 py-2 text-xs">
-                        <div>{r.reason_summary}</div>
-                        {r.status !== "PASS" &&
-                          r.reasons.map((x, i) => (
-                            <div key={i} className="text-muted-foreground">
-                              • {x}
-                            </div>
-                          ))}
-                        {r.resolution_note && <div className="mt-1 text-success">Xử lý: {r.resolution_note}</div>}
-                      </td>
-                      <td className="px-4 py-2 text-xs text-muted-foreground">
-                        {r.evaluations.requirement_name}
-                        {r.evaluations.superseded && " (đã thay thế)"}
-                      </td>
-                    </tr>
-                  ))}
-                  {results.length === 0 && (
+          {violationDays.length > 0 && (
+            <Card className="overflow-hidden p-0">
+              <CardHeader className="px-4 pt-4">
+                <CardTitle className="text-base">Vi phạm ({violations.length} ngày)</CardTitle>
+              </CardHeader>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[640px] text-sm">
+                  <thead className="bg-muted/40 text-xs text-muted-foreground">
                     <tr>
-                      <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
-                        Chưa có lần đánh giá nào.
-                      </td>
+                      <th className="px-4 py-2 text-left font-medium">Ngày</th>
+                      <th className="px-4 py-2 text-left font-medium">Trạng thái</th>
+                      <th className="px-4 py-2 text-right font-medium">KM / yêu cầu</th>
+                      <th className="px-4 py-2 text-right font-medium">Donate / yêu cầu</th>
+                      <th className="px-4 py-2 text-left font-medium">Lý do</th>
                     </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </Card>
+                  </thead>
+                  <tbody>
+                    {violationDays.map((r) => (
+                      <tr key={r.id} className="border-t align-top">
+                        <td className="px-4 py-2 text-xs font-medium">
+                          {r.evaluations.period_kind === "daily" && r.evaluations.period_start
+                            ? fmtDate(r.evaluations.period_start)
+                            : fmtDateTime(r.to_captured_at ?? r.created_at)}
+                        </td>
+                        <td className="px-4 py-2">
+                          <StatusBadge status={r.status} />
+                          {r.resolved && <div className="mt-1 text-[11px] text-success">Đã xử lý</div>}
+                        </td>
+                        <td className="px-4 py-2 text-right tabular text-xs">
+                          {fmtNum(r.km_gain)} / {fmtNum(r.km_required)}
+                        </td>
+                        <td className="px-4 py-2 text-right tabular text-xs">
+                          {fmtNum(r.donate_gain)} / {fmtNum(r.donate_required)}
+                        </td>
+                        <td className="px-4 py-2 text-xs">
+                          {r.reason_summary}
+                          {r.resolution_note && <div className="mt-1 text-success">Xử lý: {r.resolution_note}</div>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          )}
         </div>
 
         <div className="space-y-6">
