@@ -349,7 +349,8 @@ describe("weekly race", () => {
   it("marks donate approximate when the reference is far before the reset, unknown when none", () => {
     const start = Date.parse(R);
     expect(weekContribution([p("2026-11-22T04:33:00Z", 1, 8000), p("2026-11-24T05:00:00Z", 2, 9000)], start).donateApprox).toBe(true);
-    expect(weekContribution([p("2026-11-24T05:00:00Z", 2, 9000)], start).donate).toBeNull();
+    const only = weekContribution([p("2026-11-24T05:00:00Z", 2, 9000), p("2026-11-24T09:00:00Z", 3, 9400)], start);
+    expect(only).toMatchObject({ donate: 400, donateSinceFirst: true });
   });
 });
 

@@ -36,6 +36,8 @@ export interface WeekContribution {
   donate: number | null;
   /** donate is approximate (reference snapshot was taken a while before the reset) */
   donateApprox: boolean;
+  /** no screenshot before the reset: donate counted from the first screenshot of the week (a lower bound) */
+  donateSinceFirst: boolean;
   /** cumulative Donated as last read (for information) */
   donatedTotal: number | null;
   /** true when the member has no screenshot in the current week yet → values are the new-week default 0 */
@@ -47,16 +49,17 @@ export interface WeekContribution {
 export function weekContribution(points: ContributionPoint[], weekStart: number): WeekContribution {
   const sorted = [...points].sort((a, b) => a.captured_at.localeCompare(b.captured_at));
   const last = sorted[sorted.length - 1];
-  if (!last) return { km: null, donate: null, donateApprox: false, donatedTotal: null, newWeekNoData: false, lastAt: null };
+  if (!last) return { km: null, donate: null, donateApprox: false, donateSinceFirst: false, donatedTotal: null, newWeekNoData: false, lastAt: null };
 
   const t = (p: ContributionPoint) => new Date(p.captured_at).getTime();
   if (t(last) < weekStart) {
     // a new week started after the latest screenshot: the race restarts from 0
-    return { km: 0, donate: 0, donateApprox: false, donatedTotal: last.donated, newWeekNoData: true, lastAt: last.captured_at };
+    return { km: 0, donate: 0, donateApprox: false, donateSinceFirst: false, donatedTotal: last.donated, newWeekNoData: true, lastAt: last.captured_at };
   }
 
   let donate: number | null = null;
   let donateApprox = false;
+  let donateSinceFirst = false;
   if (last.donated !== null) {
     if (last.donate_type === "weekly") donate = last.donated;
     else {
@@ -66,8 +69,15 @@ export function weekContribution(points: ContributionPoint[], weekStart: number)
         donate = Math.max(0, last.donated - before.donated!);
         // if the reference was taken more than 6h before the reset, some of it may belong to last week
         donateApprox = weekStart - t(before) > 6 * 3600_000;
+      } else {
+        // no screenshot before the week started: count from the first screenshot of this week (lower bound)
+        const first = sorted.find((p) => t(p) >= weekStart && p.donated !== null && p.donate_type === "cumulative");
+        if (first) {
+          donate = Math.max(0, last.donated - first.donated!);
+          donateSinceFirst = true;
+        }
       }
     }
   }
-  return { km: last.weekly_km, donate, donateApprox, donatedTotal: last.donated, newWeekNoData: false, lastAt: last.captured_at };
+  return { km: last.weekly_km, donate, donateApprox, donateSinceFirst, donatedTotal: last.donated, newWeekNoData: false, lastAt: last.captured_at };
 }

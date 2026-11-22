@@ -34,6 +34,7 @@ export interface MemberListRow {
   current_km: number | null;
   current_donated: number | null;
   donate_approx: boolean;
+  donate_since_first: boolean;
   donated_total: number | null;
   /** no screenshot since the weekly reset yet → race values are 0 */
   new_week_no_data: boolean;
@@ -204,7 +205,9 @@ export function MembersTable({ rows }: { rows: MemberListRow[] }) {
                       <span className="text-xs font-normal text-muted-foreground" title="Chưa có ảnh trước mốc reset để làm mốc">Chưa có mốc</span>
                     ) : (
                       <>
-                        {r.donate_approx ? "≈ " : ""}
+                        <span title={r.donate_since_first ? "Tính từ ảnh đầu tiên trong tuần (chưa có ảnh trước mốc reset) — số thật có thể cao hơn" : undefined}>
+                          {r.donate_since_first ? "≥ " : r.donate_approx ? "≈ " : ""}
+                        </span>
                         {fmtNum(r.current_donated)}
                       </>
                     )}

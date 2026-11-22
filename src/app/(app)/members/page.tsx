@@ -116,6 +116,7 @@ export default async function MembersPage() {
       current_km: contributionBy.get(m.id)?.km ?? null,
       current_donated: contributionBy.get(m.id)?.donate ?? null,
       donate_approx: contributionBy.get(m.id)?.donateApprox ?? false,
+      donate_since_first: contributionBy.get(m.id)?.donateSinceFirst ?? false,
       donated_total: contributionBy.get(m.id)?.donatedTotal ?? null,
       new_week_no_data: contributionBy.get(m.id)?.newWeekNoData ?? false,
     };
