@@ -3,6 +3,7 @@ import { generateText, Output } from "ai";
 import { z } from "zod";
 import { env } from "./env";
 import { cleanUsername, parseInteger, parseNumber } from "@/lib/engine/parse";
+import { parseCountdown } from "@/lib/engine/week";
 
 const rowSchema = z.object({
   username: z.string().nullable().describe("Roblox account username exactly as shown (usually the small '@name' text), without '@'. null if not visible/unreadable."),
@@ -21,6 +22,10 @@ const ocrSchema = z.object({
   columns_visible: z.array(z.string()).describe("Column headers / stat labels visible in the image, verbatim"),
   km_label: z.string().nullable().describe("Exact label/header of the KM stat, e.g. 'Weekly KM'. null if none"),
   donate_label: z.string().nullable().describe("Exact label/header of the donation stat, e.g. 'Donated', 'Weekly Donations'. null if none"),
+  reset_countdown_text: z
+    .string()
+    .nullable()
+    .describe("The weekly reset countdown timer exactly as shown (e.g. 'Resets in 2d 05:12:33'), including its label. null if no countdown is visible"),
   rows: z.array(rowSchema),
 });
 
@@ -36,6 +41,7 @@ STRICT RULES:
 - If a row shows only one name, put it in display_name and leave username null unless it is clearly the @username.
 - Ignore rows that are cut off so badly that the name cannot be read at all.
 - Do not invent rows. Do not include header rows or UI buttons.
+- If a countdown/timer until the weekly reset is visible anywhere (e.g. "Resets in 2d 5h", "04:12:33"), copy it verbatim into reset_countdown_text.
 - Report the stat labels exactly (e.g. "Weekly KM", "Donated") so the system can tell weekly values from all-time totals.`;
 
 export interface OcrRow {
@@ -56,6 +62,9 @@ export interface OcrResult {
   is_member_list: boolean;
   km_label: string | null;
   donate_label: string | null;
+  reset_countdown_text: string | null;
+  /** seconds until the weekly reset at the moment of the screenshot, null if not visible/unreadable */
+  reset_in_seconds: number | null;
   columns_visible: string[];
   rows: OcrRow[];
   raw: OcrOutput;
@@ -111,6 +120,8 @@ export function normalizeOcr(out: OcrOutput, model: string): OcrResult {
     is_member_list: out.is_member_list,
     km_label: out.km_label,
     donate_label: out.donate_label,
+    reset_countdown_text: out.reset_countdown_text ?? null,
+    reset_in_seconds: parseCountdown(out.reset_countdown_text),
     columns_visible: out.columns_visible,
     rows,
     raw: out,

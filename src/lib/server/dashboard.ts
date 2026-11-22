@@ -2,7 +2,7 @@ import "server-only";
 import { db } from "./supabase";
 import { fetchAll } from "./fetch-all";
 import { getSettings } from "./settings";
-import { crossesWeeklyReset, localParts } from "@/lib/engine/week";
+import { localParts, resetBetween } from "@/lib/engine/week";
 
 export interface DailyPoint {
   day: string; // yyyy-mm-dd (local)
@@ -23,12 +23,12 @@ export async function dailyActivity(days = 30): Promise<DailyPoint[]> {
     member_id: string;
     weekly_km: number | null;
     donated: number | null;
-    snapshots: { captured_at: string; donate_type: string };
+    snapshots: { captured_at: string; donate_type: string; next_reset_at: string | null };
   }>(
     (a, b) =>
       db()
         .from("snapshot_entries")
-        .select("member_id, weekly_km, donated, snapshots!inner(captured_at, donate_type)")
+        .select("member_id, weekly_km, donated, snapshots!inner(captured_at, donate_type, next_reset_at)")
         .eq("verified", true)
         .gte("snapshots.captured_at", since)
         .order("id")
@@ -56,7 +56,7 @@ export async function dailyActivity(days = 30): Promise<DailyPoint[]> {
       const b = list[i];
       const ta = new Date(a.snapshots.captured_at).getTime();
       const tb = new Date(b.snapshots.captured_at).getTime();
-      const reset = crossesWeeklyReset(ta, tb, settings);
+      const reset = resetBetween({ ms: ta, next_reset_at: a.snapshots.next_reset_at }, { ms: tb, next_reset_at: b.snapshots.next_reset_at }, settings);
       let km = 0;
       if (a.weekly_km !== null && b.weekly_km !== null) {
         const va = Number(a.weekly_km);

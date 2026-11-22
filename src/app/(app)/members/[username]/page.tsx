@@ -8,7 +8,7 @@ import { db, must } from "@/lib/server/supabase";
 import { fetchAll } from "@/lib/server/fetch-all";
 import { getSettings } from "@/lib/server/settings";
 import { usernameKey } from "@/lib/engine/parse";
-import { crossesWeeklyReset } from "@/lib/engine/week";
+import { resetBetween } from "@/lib/engine/week";
 import { fmtDateTime, fmtGain, fmtHours, fmtNum } from "@/lib/format";
 import type { ResultRow } from "@/lib/server/evaluation";
 import { MemberHistoryChart } from "./history-chart";
@@ -24,7 +24,7 @@ interface EntryWithSnap {
   donated: number | null;
   last_seen_text: string | null;
   verified: boolean;
-  snapshots: { captured_at: string; donate_type: string };
+  snapshots: { captured_at: string; donate_type: string; next_reset_at: string | null };
 }
 
 export default async function MemberDetail({ params }: { params: Promise<{ username: string }> }) {
@@ -50,7 +50,7 @@ export default async function MemberDetail({ params }: { params: Promise<{ usern
       (a, b) =>
         db()
           .from("snapshot_entries")
-          .select("id, snapshot_id, display_name, level, role, weekly_km, donated, last_seen_text, verified, snapshots!inner(captured_at, donate_type)")
+          .select("id, snapshot_id, display_name, level, role, weekly_km, donated, last_seen_text, verified, snapshots!inner(captured_at, donate_type, next_reset_at)")
           .eq("member_id", member.id)
           .order("id")
           .range(a, b),
@@ -91,7 +91,7 @@ export default async function MemberDetail({ params }: { params: Promise<{ usern
       const ta = new Date(prev.snapshots.captured_at).getTime();
       const tb = new Date(e.snapshots.captured_at).getTime();
       hours = (tb - ta) / 3600_000;
-      const reset = crossesWeeklyReset(ta, tb, settings);
+      const reset = resetBetween({ ms: ta, next_reset_at: prev.snapshots.next_reset_at }, { ms: tb, next_reset_at: e.snapshots.next_reset_at }, settings);
       if (prev.weekly_km !== null && e.weekly_km !== null) {
         if (reset) {
           dKm = e.weekly_km;

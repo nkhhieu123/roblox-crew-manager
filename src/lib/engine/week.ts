@@ -77,3 +77,72 @@ export function crossesWeeklyReset(
   if (bMs <= aMs) return false;
   return lastWeeklyReset(bMs, s) > aMs;
 }
+
+export const WEEK_MS = 7 * 86_400_000;
+
+export interface ResetPoint {
+  /** capture time (ms) */
+  ms: number;
+  /** next weekly reset read from the in-game countdown on that screenshot (ISO), if known */
+  next_reset_at?: string | null;
+}
+
+/**
+ * Did a weekly reset happen in (a, b]?
+ * Uses the countdown read from the screenshots first (exact), and only falls back to the
+ * configured weekday/hour when neither snapshot has a countdown.
+ */
+export function resetBetween(
+  a: ResetPoint,
+  b: ResetPoint,
+  s: Pick<GeneralSettings, "week_reset_weekday" | "week_reset_hour" | "timezone">,
+): boolean {
+  if (b.ms <= a.ms) return false;
+  if (a.next_reset_at) {
+    // a's countdown tells exactly when the next reset after a happens
+    return new Date(a.next_reset_at).getTime() <= b.ms;
+  }
+  if (b.next_reset_at) {
+    // the reset before b happened one week before b's next reset
+    return new Date(b.next_reset_at).getTime() - WEEK_MS > a.ms;
+  }
+  return crossesWeeklyReset(a.ms, b.ms, s);
+}
+
+/**
+ * Parse an in-game countdown such as "2d 5h 30m", "6 days 04:12:33", "04:12:33",
+ * "1 ngày 3 giờ 20 phút", "5D 12H". Returns seconds, or null when unreadable.
+ */
+export function parseCountdown(input: string | null | undefined): number | null {
+  if (!input) return null;
+  let s = input.toLowerCase().replace(/resets?\s*(in)?|reset|còn lại|còn|in\b|:\s*$/g, " ").trim();
+  if (!s) return null;
+  let total = 0;
+  let found = false;
+
+  const unit = (re: RegExp, mult: number) => {
+    s = s.replace(re, (_m, n: string) => {
+      total += Number(n) * mult;
+      found = true;
+      return " ";
+    });
+  };
+  unit(/(\d+)\s*(?:days?|ngày|d)(?![a-z])/g, 86400);
+  // colon clock part: h:m:s or h:m
+  const clock = s.match(/(\d{1,3}):(\d{2})(?::(\d{2}))?/);
+  if (clock) {
+    const [, h, m, sec] = clock;
+    if (Number(m) > 59 || (sec && Number(sec) > 59)) return null;
+    total += Number(h) * 3600 + Number(m) * 60 + (sec ? Number(sec) : 0);
+    found = true;
+    s = s.replace(clock[0], " ");
+  }
+  unit(/(\d+)\s*(?:hours?|hrs?|giờ|tiếng|h)(?![a-z])/g, 3600);
+  unit(/(\d+)\s*(?:minutes?|mins?|phút|m)(?![a-z])/g, 60);
+  unit(/(\d+)\s*(?:seconds?|secs?|giây|s)(?![a-z])/g, 1);
+
+  // anything numeric left over means we didn't understand the format
+  if (!found || /\d/.test(s)) return null;
+  if (total < 0 || total > WEEK_MS / 1000 + 3600) return null;
+  return total;
+}

@@ -13,7 +13,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { NativeSelect } from "@/components/app/native-select";
 import { cn } from "@/lib/utils";
 import { levenshtein, parseInteger, parseNumber, usernameKey } from "@/lib/engine/parse";
-import { toLocalInput } from "@/lib/format";
+import { fmtDateTime, toLocalInput } from "@/lib/format";
+import { parseCountdown, WEEK_MS } from "@/lib/engine/week";
 import type { DonateType } from "@/lib/engine/types";
 import { saveSnapshot, type SaveSnapshotInput } from "./actions";
 
@@ -45,6 +46,8 @@ interface OcrResponse {
   is_member_list: boolean;
   km_label: string | null;
   donate_label: string | null;
+  reset_countdown_text: string | null;
+  reset_in_seconds: number | null;
   columns_visible: string[];
   rows: OcrRowDto[];
   image_path: string | null;
@@ -104,10 +107,12 @@ export function UploadClient({
   knownMembers,
   defaultDonateType,
   storeImages,
+  lastNextResetAt,
 }: {
   knownMembers: { username: string; display_name: string | null }[];
   defaultDonateType: DonateType;
   storeImages: boolean;
+  lastNextResetAt: string | null;
 }) {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -121,6 +126,21 @@ export function UploadClient({
   const [model, setModel] = useState<string | null>(null);
   const [rawOutputs, setRawOutputs] = useState<unknown[]>([]);
   const [notes, setNotes] = useState("");
+  // weekly reset countdown read from the screenshot ("Resets in 2d 05:12:33")
+  const [countdownText, setCountdownText] = useState("");
+  const countdownSecs = parseCountdown(countdownText);
+  const nextReset = useMemo(() => {
+    const cap = new Date(capturedAt);
+    if (countdownSecs === null || Number.isNaN(cap.getTime())) return null;
+    return new Date(cap.getTime() + countdownSecs * 1000);
+  }, [capturedAt, countdownSecs]);
+  // consistency with the reset time read on earlier screenshots (should differ by whole weeks only)
+  const resetMismatchMin = useMemo(() => {
+    if (!nextReset || !lastNextResetAt) return null;
+    const diff = nextReset.getTime() - new Date(lastNextResetAt).getTime();
+    const off = diff - Math.round(diff / WEEK_MS) * WEEK_MS;
+    return Math.round(Math.abs(off) / 60000);
+  }, [nextReset, lastNextResetAt]);
   const [saving, startSave] = useTransition();
 
   const known = useMemo(() => {
@@ -220,6 +240,10 @@ export function UploadClient({
           columns: Array.from(new Set([...prev.columns, ...data.columns_visible])),
         }));
         if (data.donate_label && /week|tuần|weekly/i.test(data.donate_label)) setDonateType("weekly");
+        if (data.reset_countdown_text) {
+          setCountdownText((prev) => prev || data.reset_countdown_text!);
+          if (data.reset_in_seconds === null) toast.warning(`Không hiểu định dạng đồng hồ reset "${data.reset_countdown_text}" — hãy nhập lại.`);
+        }
         setImages((prev) =>
           prev.map((i) => (i.id === item.id ? { ...i, status: "done", imagePath: data.image_path, rowCount: data.rows.length } : i)),
         );
@@ -308,6 +332,7 @@ export function UploadClient({
     if (duplicateKeys.size) return void toast.error("Có Username bị trùng — hãy gộp hoặc xóa dòng trùng.");
     const captured = new Date(capturedAt);
     if (Number.isNaN(captured.getTime())) return void toast.error("Thời điểm snapshot không hợp lệ");
+    if (countdownText.trim() && countdownSecs === null) return void toast.error("Đồng hồ reset không đúng định dạng (VD: 2d 05:12:33)");
 
     startSave(async () => {
       const res = await saveSnapshot({
@@ -317,6 +342,8 @@ export function UploadClient({
         ocr_model: model,
         ocr_raw: { labels, outputs: rawOutputs },
         notes: notes.trim() || null,
+        reset_countdown_text: countdownText.trim() || null,
+        next_reset_at: nextReset ? nextReset.toISOString() : null,
         entries,
       });
       if (!res.ok) {
@@ -595,6 +622,32 @@ export function UploadClient({
                 <p className="text-xs text-muted-foreground">
                   Nhãn AI đọc được: <b>{labels.donate ?? "không thấy"}</b>. KM: <b>{labels.km ?? "không thấy"}</b> (luôn xử lý như Weekly, reset mỗi tuần).
                 </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="countdown">Đồng hồ reset KM trong ảnh</Label>
+                <Input
+                  id="countdown"
+                  value={countdownText}
+                  onChange={(e) => setCountdownText(e.target.value)}
+                  placeholder="VD: 2d 05:12:33"
+                  className={cn(countdownText.trim() && countdownSecs === null && "border-destructive")}
+                />
+                <p className="text-xs text-muted-foreground">
+                  {nextReset ? (
+                    <>
+                      Reset tiếp theo: <b className="text-foreground">{fmtDateTime(nextReset.toISOString())}</b> (= thời điểm dữ liệu + đếm ngược).
+                    </>
+                  ) : countdownText.trim() ? (
+                    <span className="text-destructive">Không hiểu định dạng — dùng dạng &quot;2d 5h 30m&quot; hoặc &quot;2d 05:30:00&quot;.</span>
+                  ) : (
+                    "AI tự đọc nếu ảnh có đồng hồ. Để trống nếu không có — hệ thống dùng mốc reset trong Settings."
+                  )}
+                </p>
+                {resetMismatchMin !== null && resetMismatchMin > 15 && (
+                  <p className="text-xs text-warning">
+                    Lệch {resetMismatchMin} phút so với mốc reset ở ảnh trước ({fmtDateTime(lastNextResetAt)}). Kiểm tra lại thời điểm dữ liệu hoặc đồng hồ.
+                  </p>
+                )}
               </div>
               <div className="space-y-2">
                 <Label htmlFor="notes">Ghi chú (tùy chọn)</Label>

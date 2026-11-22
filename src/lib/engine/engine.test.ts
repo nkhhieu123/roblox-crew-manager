@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseNumber, levenshtein } from "./parse";
-import { crossesWeeklyReset, lastWeeklyReset } from "./week";
+import { crossesWeeklyReset, lastWeeklyReset, parseCountdown, resetBetween } from "./week";
 import { evaluateMember } from "./evaluate";
 import { DEFAULT_REQUIREMENT, DEFAULT_SETTINGS, type DataPoint, type RequirementConfig } from "./types";
 
@@ -271,5 +271,50 @@ describe("evaluateMember — custom & scaling", () => {
     );
     expect(r.from_snapshot_id).toBe("b");
     expect(r.km.value).toBe(6000);
+  });
+});
+
+describe("countdown-based weekly reset", () => {
+  it.each([
+    ["Resets in 2d 05:12:33", 2 * 86400 + 5 * 3600 + 12 * 60 + 33],
+    ["2d 5h 30m", 2 * 86400 + 5 * 3600 + 30 * 60],
+    ["04:12:33", 4 * 3600 + 12 * 60 + 33],
+    ["1 ngày 3 giờ 20 phút", 86400 + 3 * 3600 + 20 * 60],
+    ["5D 12H", 5 * 86400 + 12 * 3600],
+    ["6 days 23:59", 6 * 86400 + 23 * 3600 + 59 * 60],
+  ])("parses %s", (text, secs) => expect(parseCountdown(text)).toBe(secs));
+
+  it.each(["", "soon", "2d 5x", "9d 00:00:00", "12:75"])("rejects %s", (text) => expect(parseCountdown(text)).toBeNull());
+
+  const S2 = { ...S }; // settings say Monday 00:00 VN, but the game actually resets Thursday 20:00 VN
+  it("uses the countdown instead of the configured weekday", () => {
+    // Thu 2026-11-19 10:00 VN, countdown 10h → reset Thu 20:00 VN (13:00Z)
+    const a = { ms: Date.parse("2026-11-19T03:00:00Z"), next_reset_at: "2026-11-19T13:00:00Z" };
+    const b = { ms: Date.parse("2026-11-20T03:00:00Z"), next_reset_at: "2026-11-26T13:00:00Z" };
+    expect(resetBetween(a, b, S2)).toBe(true);
+    // Sunday → Monday crosses the configured reset but NOT the real one → no reset
+    const c = { ms: Date.parse("2026-11-22T03:00:00Z"), next_reset_at: "2026-11-26T13:00:00Z" };
+    const d = { ms: Date.parse("2026-11-23T03:00:00Z"), next_reset_at: "2026-11-26T13:00:00Z" };
+    expect(resetBetween(c, d, S2)).toBe(false);
+  });
+
+  it("works when only the later snapshot has a countdown", () => {
+    const a = { ms: Date.parse("2026-11-19T03:00:00Z"), next_reset_at: null };
+    const b = { ms: Date.parse("2026-11-20T03:00:00Z"), next_reset_at: "2026-11-26T13:00:00Z" };
+    expect(resetBetween(a, b, S2)).toBe(true); // previous reset 2026-11-19T13:00Z is after a
+  });
+
+  it("gives exact KM gain when no reset happened even across the configured Monday", () => {
+    const r = evaluateMember(
+      [
+        { snapshot_id: "a", captured_at: "2026-11-22T03:00:00Z", weekly_km: 20000, donated: null, donate_type: "cumulative", next_reset_at: "2026-11-26T13:00:00Z" },
+        { snapshot_id: "b", captured_at: "2026-11-23T03:00:00Z", weekly_km: 26000, donated: null, donate_type: "cumulative", next_reset_at: "2026-11-26T13:00:00Z" },
+      ],
+      "b",
+      { ...ANY, use_donate: false },
+      S2,
+    );
+    expect(r.km).toEqual({ value: 6000, exact: true, flags: [] });
+    expect(r.status).toBe("PASS");
   });
 });

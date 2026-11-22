@@ -24,6 +24,8 @@ export default async function SnapshotDetail({ params }: { params: Promise<{ id:
     member_count: number;
     ocr_model: string | null;
     notes: string | null;
+    next_reset_at: string | null;
+    reset_countdown_text: string | null;
   } | null;
   if (!snap) notFound();
 
@@ -63,6 +65,16 @@ export default async function SnapshotDetail({ params }: { params: Promise<{ id:
             Upload lúc {fmtDateTime(snap.uploaded_at)} bởi <b>{snap.uploaded_by}</b> · {snap.member_count} thành viên ·
             Donate: {snap.donate_type === "weekly" ? "theo tuần" : "tích lũy"}
             {snap.ocr_model && <> · OCR: {snap.ocr_model}</>}
+            <br />
+            Reset KM tiếp theo:{" "}
+            {snap.next_reset_at ? (
+              <b>
+                {fmtDateTime(snap.next_reset_at)}
+                {snap.reset_countdown_text && <span className="font-normal"> (đồng hồ: {snap.reset_countdown_text})</span>}
+              </b>
+            ) : (
+              "không có đồng hồ trong ảnh — dùng mốc trong Settings"
+            )}
           </>
         }
         actions={<SnapshotActions snapshotId={snap.id} capturedAt={fmtDateTime(snap.captured_at)} memberCount={snap.member_count} />}

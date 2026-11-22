@@ -14,6 +14,7 @@ interface SnapshotRow {
   id: string;
   captured_at: string;
   donate_type: DonateType;
+  next_reset_at: string | null;
 }
 
 interface EntryRow {
@@ -56,7 +57,7 @@ export async function runEvaluation(opts: { snapshotId?: string; actor: string; 
   const cfg = set.config;
 
   // ---- target snapshot ----
-  const targetQuery = db().from("snapshots").select("id, captured_at, donate_type");
+  const targetQuery = db().from("snapshots").select("id, captured_at, donate_type, next_reset_at");
   const target = must(
     opts.snapshotId
       ? await targetQuery.eq("id", opts.snapshotId).maybeSingle()
@@ -74,7 +75,7 @@ export async function runEvaluation(opts: { snapshotId?: string; actor: string; 
     (a, b) =>
       db()
         .from("snapshots")
-        .select("id, captured_at, donate_type")
+        .select("id, captured_at, donate_type, next_reset_at")
         .gte("captured_at", fromIso)
         .lte("captured_at", target.captured_at)
         .order("captured_at")
@@ -112,6 +113,7 @@ export async function runEvaluation(opts: { snapshotId?: string; actor: string; 
       weekly_km: e.weekly_km === null ? null : Number(e.weekly_km),
       donated: e.donated === null ? null : Number(e.donated),
       donate_type: s.donate_type,
+      next_reset_at: s.next_reset_at,
     });
     pointsByMember.set(e.member_id, list);
   }

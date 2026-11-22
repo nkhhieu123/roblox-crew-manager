@@ -1,5 +1,5 @@
 import type { DataPoint, Gain, GeneralSettings, MemberEvaluation, Metric, RequirementConfig } from "./types";
-import { crossesWeeklyReset } from "./week";
+import { resetBetween } from "./week";
 import { buildRuleTree, countConditions, evaluateTree, fmt, METRIC_LABEL, minThresholds } from "./rules";
 
 const HOUR = 3600_000;
@@ -44,7 +44,7 @@ export function weeklyGain(
     const b = usable[i];
     const va = pick(a)!;
     const vb = pick(b)!;
-    if (crossesWeeklyReset(t(a), t(b), s)) {
+    if (resetBetween({ ms: t(a), next_reset_at: a.next_reset_at }, { ms: t(b), next_reset_at: b.next_reset_at }, s)) {
       // value b is what was earned since the reset; what happened between a and the reset is unknown (≥ 0)
       total += vb;
       exact = false;

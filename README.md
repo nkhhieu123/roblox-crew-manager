@@ -36,6 +36,7 @@ Website quản lý thành viên Crew Roblox: tải ảnh chụp danh sách Membe
 - **Định danh bằng Username** (không phân biệt hoa/thường), không dùng Display Name.
 - **Mỗi lần upload = 1 Snapshot mới**, gắn thời điểm dữ liệu + thời điểm upload + người upload. Snapshot cũ không bị ghi đè.
 - **Hoạt động phát sinh = Snapshot sau − Snapshot trước.** Với chu kỳ W giờ, snapshot gốc là snapshot mới nhất cũ hơn ít nhất `W × (1 − dung sai)` giờ. Nếu khoảng cách thực tế dài hơn chu kỳ, yêu cầu được nhân theo tỷ lệ (VD: 48h → yêu cầu ×2).
+- **Đồng hồ reset trong ảnh:** AI đọc đồng hồ đếm ngược (VD `Resets in 2d 05:12:33`) ⇒ **mốc reset chính xác = thời điểm dữ liệu + đếm ngược**, lưu theo từng snapshot. Có thể sửa tay ở bước lưu; nếu lệch > 15 phút so với ảnh trước, hệ thống cảnh báo. Ảnh không có đồng hồ mới dùng mốc thứ/giờ trong Settings.
 - **Weekly KM reset:** hệ thống cộng dồn qua mọi snapshot trung gian. Nếu khoảng đánh giá đi qua mốc reset (cấu hình ở Settings) hoặc KM bị giảm, chỉ biết mức tăng **tối thiểu** (= giá trị sau reset) → nếu mức tối thiểu đã đạt thì PASS, nếu chưa thì **PENDING**, không bao giờ kết luận FAIL.
 - **Donate:** chọn loại chỉ số khi upload — *tích lũy* (tính phần tăng thêm) hoặc *theo tuần* (xử lý reset như KM). Donate tích lũy bị giảm → đánh dấu bất thường, PENDING. Hai snapshot khác loại Donate → không so sánh.
 - **Thiếu dữ liệu → PENDING**: không có snapshot đủ cũ, không có trong snapshot mới, số không đọc được, dòng OCR chưa xác thực.
@@ -50,6 +51,7 @@ Website quản lý thành viên Crew Roblox: tải ảnh chụp danh sách Membe
 2. Vào **SQL Editor** → chạy lần lượt 2 file:
    - `supabase/migrations/20261122000000_init.sql` (bảng, index, RLS, bucket `snapshots`)
    - `supabase/migrations/20261122000100_save_snapshot_fn.sql` (hàm lưu snapshot nguyên tử)
+   - `supabase/migrations/20261122000200_reset_countdown.sql` (lưu đồng hồ reset tuần)
 
    Hoặc dùng Supabase CLI: `npx supabase link --project-ref <ref>` rồi `npx supabase db push`.
 3. Vào **Project Settings → API** lấy:

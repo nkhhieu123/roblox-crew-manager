@@ -31,6 +31,11 @@ const payloadSchema = z.object({
   ocr_model: z.string().nullable(),
   ocr_raw: z.unknown().optional(),
   notes: z.string().max(1000).nullable(),
+  reset_countdown_text: z.string().max(100).nullable(),
+  next_reset_at: z
+    .string()
+    .nullable()
+    .refine((s) => s === null || !Number.isNaN(Date.parse(s)), "Mốc reset không hợp lệ"),
   entries: z.array(entrySchema).min(1, "Không có thành viên nào để lưu").max(2000),
 });
 
@@ -49,6 +54,13 @@ export async function saveSnapshot(input: SaveSnapshotInput): Promise<
     return { ok: false, error: "Thời điểm snapshot không được ở tương lai." };
   }
 
+  if (p.next_reset_at) {
+    const diff = new Date(p.next_reset_at).getTime() - captured.getTime();
+    if (diff <= 0 || diff > 7 * 86_400_000 + 3_600_000) {
+      return { ok: false, error: "Mốc reset phải nằm trong vòng 7 ngày sau thời điểm snapshot." };
+    }
+  }
+
   // de-duplicate by username (case-insensitive)
   const seen = new Set<string>();
   for (const e of p.entries) {
@@ -59,7 +71,12 @@ export async function saveSnapshot(input: SaveSnapshotInput): Promise<
   }
 
   const { data, error } = await db().rpc("save_snapshot", {
-    payload: { ...p, captured_at: captured.toISOString(), uploaded_by: manager },
+    payload: {
+      ...p,
+      captured_at: captured.toISOString(),
+      next_reset_at: p.next_reset_at ? new Date(p.next_reset_at).toISOString() : null,
+      uploaded_by: manager,
+    },
   });
   if (error) return { ok: false, error: `Lưu snapshot thất bại: ${error.message}` };
   const snapshotId = data as string;
@@ -71,6 +88,8 @@ export async function saveSnapshot(input: SaveSnapshotInput): Promise<
     unverified,
     images: p.image_paths.length,
     donate_type: p.donate_type,
+    next_reset_at: p.next_reset_at,
+    reset_countdown_text: p.reset_countdown_text,
   });
 
   let evaluation = "";

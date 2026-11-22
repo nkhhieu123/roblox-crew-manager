@@ -100,6 +100,8 @@ export interface DataPoint {
   weekly_km: number | null;
   donated: number | null;
   donate_type: DonateType;
+  /** Next weekly reset read from the in-game countdown on this snapshot (ISO), if known. */
+  next_reset_at?: string | null;
 }
 
 /** A computed gain. `exact=false` means the value is only a lower bound (e.g. weekly reset crossed). */
