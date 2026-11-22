@@ -14,8 +14,8 @@ import { NativeSelect } from "@/components/app/native-select";
 import { cn } from "@/lib/utils";
 import { levenshtein, parseInteger, parseNumber, usernameKey } from "@/lib/engine/parse";
 import { fmtDateTime, toLocalInput } from "@/lib/format";
-import { parseCountdown, WEEK_MS } from "@/lib/engine/week";
-import type { DonateType } from "@/lib/engine/types";
+import { parseCountdown, resetBetween, WEEK_MS } from "@/lib/engine/week";
+import type { DonateType, GeneralSettings } from "@/lib/engine/types";
 import { saveSnapshot, type SaveSnapshotInput } from "./actions";
 
 interface ImageItem {
@@ -48,6 +48,7 @@ interface OcrResponse {
   donate_label: string | null;
   reset_countdown_text: string | null;
   reset_in_seconds: number | null;
+  member_total: number | null;
   columns_visible: string[];
   rows: OcrRowDto[];
   image_path: string | null;
@@ -94,13 +95,27 @@ async function prepareImage(file: File): Promise<File> {
   }
 }
 
-function sameValues(a: DraftRow, b: OcrRowDto) {
-  return (
-    str(a.weekly_km) === str(b.weekly_km) &&
-    str(a.donated) === str(b.donated) &&
-    str(a.level) === str(b.level) &&
-    (a.role || "") === (b.role || "")
-  );
+/** A member's most recent verified values (from the previous snapshot that contained them). */
+export interface PreviousValue {
+  captured_at: string;
+  next_reset_at: string | null;
+  donate_type: DonateType;
+  weekly_km: number | null;
+  donated: number | null;
+}
+
+type Delta = { text: string; tone: "up" | "zero" | "warn" | "muted"; title?: string };
+
+/** Same person read twice from overlapping screenshots, with a username differing by a few characters? */
+function looksLikeSamePerson(a: DraftRow, b: OcrRowDto): boolean {
+  const da = a.display_name.trim().toLowerCase();
+  const db = (b.display_name ?? "").trim().toLowerCase();
+  if (!da || da !== db) return false;
+  if (b.weekly_km === null || b.donated === null) return false;
+  if (str(a.weekly_km) !== str(b.weekly_km) || str(a.donated) !== str(b.donated)) return false;
+  const ka = usernameKey(a.username);
+  const kb = usernameKey(b.username ?? "");
+  return !ka || !kb || levenshtein(ka, kb) <= 3;
 }
 
 export function UploadClient({
@@ -108,11 +123,15 @@ export function UploadClient({
   defaultDonateType,
   storeImages,
   lastNextResetAt,
+  previous,
+  resetSettings,
 }: {
   knownMembers: { username: string; display_name: string | null }[];
   defaultDonateType: DonateType;
   storeImages: boolean;
   lastNextResetAt: string | null;
+  previous: Record<string, PreviousValue>;
+  resetSettings: Pick<GeneralSettings, "week_reset_weekday" | "week_reset_hour" | "timezone">;
 }) {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -126,6 +145,7 @@ export function UploadClient({
   const [model, setModel] = useState<string | null>(null);
   const [rawOutputs, setRawOutputs] = useState<unknown[]>([]);
   const [notes, setNotes] = useState("");
+  const [memberTotal, setMemberTotal] = useState<number | null>(null);
   // weekly reset countdown read from the screenshot ("Resets in 2d 05:12:33")
   const [countdownText, setCountdownText] = useState("");
   const countdownSecs = parseCountdown(countdownText);
@@ -175,10 +195,59 @@ export function UploadClient({
       for (const r of incoming) {
         const key = r.username ? usernameKey(r.username) : "";
         const idx = key ? next.findIndex((x) => usernameKey(x.username) === key) : -1;
+        const fuzzyIdx = idx < 0 ? next.findIndex((x) => looksLikeSamePerson(x, r)) : -1;
+        if (fuzzyIdx >= 0) {
+          // overlapping screenshots: same display name + identical stats, username read slightly differently
+          const existing = next[fuzzyIdx];
+          const a = existing.username;
+          const b = r.username;
+          // prefer a username that is already a known member, then the reading that was not cut off / uncertain
+          const aKnown = known.has(usernameKey(a));
+          const bKnown = !!b && known.has(usernameKey(b));
+          const useB = !!b && (bKnown && !aKnown ? true : aKnown && !bKnown ? false : existing.needs_review && !r.needs_review);
+          const chosen = useB ? b : a;
+          const bothConfident = !existing.needs_review && !r.needs_review && !!a && !!b && !aKnown && !bKnown;
+          next[fuzzyIdx] = {
+            ...existing,
+            username: chosen,
+            needs_review: bothConfident,
+            verified: bothConfident ? false : existing.verified || !r.needs_review,
+            review_notes: [
+              useB ? r.review_notes : existing.review_notes,
+              a && b && usernameKey(a) !== usernameKey(b)
+                ? `Trùng giữa 2 ảnh, Username đọc khác: ${a} / ${b} → đã gộp, dùng ${chosen}`
+                : `Trùng giữa 2 ảnh → đã gộp`,
+            ]
+              .filter(Boolean)
+              .join("; "),
+          };
+          continue;
+        }
         if (idx >= 0) {
           // same member appears in two overlapping screenshots
           const existing = next[idx];
-          if (!sameValues(existing, r)) {
+          // fill blanks from the other screenshot; only flag real conflicts (both readings have a value and differ)
+          const filled: DraftRow = {
+            ...existing,
+            display_name: existing.display_name || (r.display_name ?? ""),
+            level: existing.level || str(r.level),
+            role: existing.role || (r.role ?? ""),
+            weekly_km: existing.weekly_km || str(r.weekly_km),
+            donated: existing.donated || str(r.donated),
+            last_seen_text: existing.last_seen_text || (r.last_seen_text ?? ""),
+          };
+          const conflict = (x: string, y: unknown) => x !== "" && str(y) !== "" && x !== str(y);
+          const hasConflict =
+            conflict(existing.weekly_km, r.weekly_km) || conflict(existing.donated, r.donated) || conflict(existing.level, r.level);
+          if (!hasConflict) {
+            // a clean reading confirms a row that was only uncertain because it was cut off
+            const confirmed = existing.needs_review && !r.needs_review && !!filled.weekly_km && !!filled.donated;
+            next[idx] = confirmed
+              ? { ...filled, needs_review: false, verified: true, review_notes: "Đã xác nhận bằng ảnh khác (dòng bị cắt ở 1 ảnh)" }
+              : filled;
+            continue;
+          }
+          if (hasConflict) {
             next[idx] = {
               ...existing,
               needs_review: true,
@@ -232,6 +301,7 @@ export function UploadClient({
         if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
         if (!data.is_member_list) toast.warning(`Ảnh ${index + 1}: có vẻ không phải danh sách Members — hãy kiểm tra kỹ.`);
         mergeRows(data.rows, index);
+        if (data.member_total) setMemberTotal((prev) => Math.max(prev ?? 0, data.member_total!));
         setModel(data.model);
         setRawOutputs((prev) => [...prev, { image: index + 1, km_label: data.km_label, donate_label: data.donate_label, columns: data.columns_visible, rows: data.rows.map((r) => r.raw) }]);
         setLabels((prev) => ({
@@ -293,6 +363,37 @@ export function UploadClient({
       }
     }
     return best;
+  }
+
+  /** KM / Donate gained since the member's previous snapshot, computed as soon as the image is scanned. */
+  function deltas(r: DraftRow): { km: Delta; donate: Delta; since: string | null } {
+    const prev = previous[usernameKey(r.username)];
+    const none: Delta = { text: "Mới", tone: "muted", title: "Chưa có snapshot trước để so sánh" };
+    if (!prev) return { km: none, donate: none, since: null };
+    const capMs = new Date(capturedAt).getTime();
+    const prevMs = new Date(prev.captured_at).getTime();
+    const hours = (capMs - prevMs) / 3600_000;
+    const since =
+      hours <= 0 ? null : hours >= 48 ? `${Math.round(hours / 24)} ngày` : hours >= 1 ? `${Math.round(hours)} giờ` : `${Math.max(1, Math.round(hours * 60))} phút`;
+    const reset = resetBetween(
+      { ms: prevMs, next_reset_at: prev.next_reset_at },
+      { ms: capMs, next_reset_at: nextReset ? nextReset.toISOString() : null },
+      resetSettings,
+    );
+    const calc = (curText: string, before: number | null, weekly: boolean): Delta => {
+      const cur = curText.trim() ? parseNumber(curText) : null;
+      if (cur === null || before === null) return { text: "Chưa rõ", tone: "muted" };
+      if (hours <= 0) return { text: "—", tone: "muted", title: "Thời điểm dữ liệu không sau snapshot trước" };
+      if (weekly && reset) return { text: `≥ +${cur.toLocaleString("vi-VN")}`, tone: cur > 0 ? "up" : "zero", title: "Đã qua mốc reset tuần — chỉ biết mức tăng tối thiểu" };
+      if (cur < before) return { text: `${(cur - before).toLocaleString("vi-VN")}`, tone: "warn", title: weekly ? "KM giảm — reset sớm hoặc đọc sai" : "Donate tích lũy giảm — có thể đọc sai" };
+      const d = cur - before;
+      return { text: `+${d.toLocaleString("vi-VN")}`, tone: d > 0 ? "up" : "zero", title: `Trước: ${before.toLocaleString("vi-VN")}` };
+    };
+    return {
+      km: calc(r.weekly_km, prev.weekly_km, true),
+      donate: prev.donate_type !== donateType ? { text: "Khác loại", tone: "warn", title: "Loại chỉ số Donate khác snapshot trước" } : calc(r.donated, prev.donated, donateType === "weekly"),
+      since,
+    };
   }
 
   const stats = useMemo(() => {
@@ -467,13 +568,20 @@ export function UploadClient({
                 {stats.unverified} chưa xác thực
               </span>
               <span className="rounded-md bg-info/15 px-2 py-1 text-info">{stats.newMembers} thành viên mới</span>
+              {memberTotal !== null && (
+                <span className={cn("rounded-md px-2 py-1", memberTotal === stats.total ? "bg-success/15 text-success" : "bg-destructive/15 text-destructive")}>
+                  {memberTotal === stats.total
+                    ? `Khớp với "Members ${memberTotal}" trong game`
+                    : `Game ghi ${memberTotal} người nhưng đang có ${stats.total} dòng — kiểm tra trùng/thiếu`}
+                </span>
+              )}
               {labels.columns.length > 0 && (
                 <span className="rounded-md bg-muted px-2 py-1 text-muted-foreground">Cột thấy được: {labels.columns.join(", ")}</span>
               )}
             </div>
 
             <div className="overflow-x-auto rounded-lg border">
-              <table className="w-full min-w-[1000px] text-sm">
+              <table className="w-full min-w-[1180px] text-sm">
                 <thead className="bg-muted/40 text-xs text-muted-foreground">
                   <tr>
                     <th className="px-2 py-2 text-left font-medium">Xác thực</th>
@@ -482,7 +590,9 @@ export function UploadClient({
                     <th className="px-2 py-2 text-left font-medium">Level</th>
                     <th className="px-2 py-2 text-left font-medium">Role</th>
                     <th className="px-2 py-2 text-left font-medium">Weekly KM</th>
+                    <th className="px-2 py-2 text-left font-medium text-primary">KM tăng</th>
                     <th className="px-2 py-2 text-left font-medium">Donated</th>
+                    <th className="px-2 py-2 text-left font-medium text-primary">Donate tăng</th>
                     <th className="px-2 py-2 text-left font-medium">Last Seen</th>
                     <th className="px-2 py-2 text-left font-medium">Ghi chú</th>
                     <th className="px-2 py-2" />
@@ -494,6 +604,7 @@ export function UploadClient({
                     const isNew = !!k && !known.has(k);
                     const sug = isNew ? suggestion(r.username) : null;
                     const dup = duplicateKeys.has(k);
+                    const dl = deltas(r);
                     return (
                       <tr key={r.id} className={cn("border-t align-top", !r.verified && "bg-warning/5", dup && "bg-destructive/10")}>
                         <td className="px-2 py-1.5">
@@ -541,6 +652,12 @@ export function UploadClient({
                             className="h-7 w-24 text-xs tabular"
                           />
                         </td>
+                        <td className="px-2 py-1.5 text-xs tabular whitespace-nowrap" title={dl.km.title}>
+                          <span className={cn(dl.km.tone === "up" && "font-semibold text-success", dl.km.tone === "warn" && "text-warning", dl.km.tone === "muted" && "text-muted-foreground", dl.km.tone === "zero" && "text-destructive")}>
+                            {dl.km.text}
+                          </span>
+                          {dl.since && dl.km.tone !== "muted" && <div className="text-[10px] text-muted-foreground">trong {dl.since}</div>}
+                        </td>
                         <td className="px-2 py-1.5">
                           <Input
                             value={r.donated}
@@ -549,6 +666,12 @@ export function UploadClient({
                             onChange={(e) => update(r.id, { donated: e.target.value })}
                             className="h-7 w-24 text-xs tabular"
                           />
+                        </td>
+                        <td className="px-2 py-1.5 text-xs tabular whitespace-nowrap" title={dl.donate.title}>
+                          <span className={cn(dl.donate.tone === "up" && "font-semibold text-success", dl.donate.tone === "warn" && "text-warning", dl.donate.tone === "muted" && "text-muted-foreground", dl.donate.tone === "zero" && "text-destructive")}>
+                            {dl.donate.text}
+                          </span>
+                          {dl.since && dl.donate.tone !== "muted" && <div className="text-[10px] text-muted-foreground">trong {dl.since}</div>}
                         </td>
                         <td className="px-2 py-1.5">
                           <Input value={r.last_seen_text} onChange={(e) => update(r.id, { last_seen_text: e.target.value })} className="h-7 w-24 text-xs" />
@@ -574,7 +697,7 @@ export function UploadClient({
                   })}
                   {rows.length === 0 && (
                     <tr>
-                      <td colSpan={10} className="px-3 py-8 text-center text-muted-foreground">
+                      <td colSpan={12} className="px-3 py-8 text-center text-muted-foreground">
                         Không nhận diện được thành viên nào. Thử ảnh rõ hơn hoặc thêm thủ công.
                       </td>
                     </tr>

@@ -21,6 +21,10 @@ const rowSchema = z.object({
 const ocrSchema = z.object({
   is_member_list: z.boolean().describe("true if the image shows a Roblox crew/group members list"),
   columns_visible: z.array(z.string()).describe("Column headers / stat labels visible in the image, verbatim"),
+  member_total: z
+    .number()
+    .nullable()
+    .describe("Total crew member count shown in a header such as 'Members 30 / 30' (the first number). null if not visible"),
   km_label: z.string().nullable().describe("Exact label/header of the KM stat, e.g. 'Weekly KM'. null if none"),
   donate_label: z.string().nullable().describe("Exact label/header of the donation stat, e.g. 'Donated', 'Weekly Donations'. null if none"),
   reset_countdown_text: z
@@ -38,7 +42,8 @@ Extract EVERY member row visible in the image, top to bottom.
 STRICT RULES:
 - Copy text EXACTLY as displayed. Do not translate, correct, round or reformat numbers.
 - NEVER guess. If a value is not visible, cut off or unreadable, return null for it and set "uncertain": true.
-- Usernames are critical identifiers: Roblox usernames contain only letters, digits and underscore. Distinguish carefully between similar characters (l/I/1, O/0, rn/m, S/5, B/8). If unsure about any character, set "uncertain": true and explain in "note".
+- Usernames are critical identifiers: Roblox usernames contain only letters, digits and underscore. Distinguish carefully between similar characters (l/I/1, O/0, rn/m, S/5, B/8). The game uses a small condensed font where a/o, i/j/l, v/y, u/v are easily confused — read the small "@username" text letter by letter. If unsure about any character, set "uncertain": true and explain in "note".
+- A row at the top or bottom edge of the list that is partially hidden/cut off MUST have "uncertain": true (its small @username text is usually clipped).
 - If a row shows only one name, put it in display_name and leave username null unless it is clearly the @username.
 - Ignore rows that are cut off so badly that the name cannot be read at all.
 - Do not invent rows. Do not include header rows or UI buttons.
@@ -64,6 +69,7 @@ export interface OcrResult {
   km_label: string | null;
   donate_label: string | null;
   reset_countdown_text: string | null;
+  member_total: number | null;
   /** seconds until the weekly reset at the moment of the screenshot, null if not visible/unreadable */
   reset_in_seconds: number | null;
   columns_visible: string[];
@@ -71,12 +77,15 @@ export interface OcrResult {
   raw: OcrOutput;
 }
 
-const USERNAME_RE = /^[A-Za-z0-9_]{3,20}$/;
+const USERNAME_RE = /^[A-Za-z0-9_]{3,40}$/;
 
 /** Convert raw model output into typed rows. Anything ambiguous is flagged for manual review. */
 export function normalizeOcr(out: OcrOutput, model: string): OcrResult {
   const rows: OcrRow[] = [];
   for (const r of out.rows) {
+    // a clipped row with neither a username nor any number carries no usable data (e.g. a row cut off
+    // at the edge, or an item from another panel) — drop it instead of creating an empty member row
+    if (!r.username?.trim() && !r.weekly_km_text?.trim() && !r.donated_text?.trim()) continue;
     const notes: string[] = [];
     let needs = r.uncertain;
     if (r.note) notes.push(r.note);
@@ -122,6 +131,7 @@ export function normalizeOcr(out: OcrOutput, model: string): OcrResult {
     km_label: out.km_label,
     donate_label: out.donate_label,
     reset_countdown_text: out.reset_countdown_text ?? null,
+    member_total: out.member_total ?? null,
     reset_in_seconds: parseCountdown(out.reset_countdown_text),
     columns_visible: out.columns_visible,
     rows,
