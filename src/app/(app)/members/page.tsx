@@ -8,7 +8,7 @@ import { MembersTable, type MemberListRow } from "./members-table";
 export const metadata = { title: "Members · Crew Manager" };
 
 export default async function MembersPage() {
-  const [members, latest, fails] = await Promise.all([
+  const [members, latest, fails, current] = await Promise.all([
     fetchAll<{
       id: string;
       username: string;
@@ -40,7 +40,28 @@ export default async function MembersPage() {
           .range(a, b),
       "Load violations",
     ),
+    // latest verified values per member = what they have contributed so far (KM this week, total Donated)
+    fetchAll<{ member_id: string; weekly_km: number | null; donated: number | null; snapshots: { captured_at: string } }>(
+      (a, b) =>
+        db()
+          .from("snapshot_entries")
+          .select("member_id, weekly_km, donated, snapshots!inner(captured_at)")
+          .eq("verified", true)
+          .order("id")
+          .range(a, b),
+      "Load current values",
+    ),
   ]);
+  const currentBy = new Map<string, { km: number | null; donated: number | null; at: string }>();
+  for (const c of current) {
+    const prev = currentBy.get(c.member_id);
+    if (prev && prev.at >= c.snapshots.captured_at) continue;
+    currentBy.set(c.member_id, {
+      km: c.weekly_km === null ? null : Number(c.weekly_km),
+      donated: c.donated === null ? null : Number(c.donated),
+      at: c.snapshots.captured_at,
+    });
+  }
 
   const results = latest
     ? await fetchAll<ResultRow>(
@@ -73,6 +94,8 @@ export default async function MembersPage() {
       no_new_data: !!r?.flags?.includes("no_new_data"),
       consecutive: r?.consecutive_fails ?? 0,
       violations: violationCount.get(m.id) ?? 0,
+      current_km: currentBy.get(m.id)?.km ?? null,
+      current_donated: currentBy.get(m.id)?.donated ?? null,
     };
   });
 
