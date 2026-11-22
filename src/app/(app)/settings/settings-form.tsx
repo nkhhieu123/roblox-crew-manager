@@ -83,6 +83,16 @@ export function SettingsForm({ initial }: { initial: GeneralSettings }) {
           </p>
         </div>
 
+        <label className="flex items-start gap-3 text-sm">
+          <Switch checked={s.force_daily_verdict} onCheckedChange={(v) => set("force_daily_verdict", v)} />
+          <span>
+            Luôn chốt PASS/FAIL khi hết ngày
+            <span className="block text-xs text-muted-foreground">
+              Kể cả khi quên chụp ảnh gần 0h: dùng số ước tính tại 0h (hoặc phần ngày đo được). Tắt để giữ PENDING cho đến khi đủ ảnh.
+            </span>
+          </span>
+        </label>
+
         <label className="flex items-center gap-3 text-sm">
           <Switch checked={s.store_images} onCheckedChange={(v) => set("store_images", v)} />
           Lưu ảnh gốc vào Supabase Storage

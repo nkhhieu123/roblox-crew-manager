@@ -406,10 +406,29 @@ describe("daily periods (00:00 → 00:00 Vietnam time)", () => {
     expect(r.flags).toContain("upper_bound_fail");
   });
 
-  it("PENDING with an estimate when it cannot be decided", () => {
+  it("forced verdict (default): FAIL from the measured part of the first day", () => {
+    const r = evaluateMemberDaily(
+      [pt2("a", "2026-11-19T04:33:00Z", 10000, 0), pt2("b", "2026-11-19T16:55:00Z", 60000, 0)],
+      day, after, D, { ...SS, force_daily_verdict: true },
+    );
+    expect(r.status).toBe("FAIL");
+    expect(r.flags).toContain("forced_verdict");
+    expect(r.km.value).toBe(50000);
+  });
+
+  it("forced verdict uses the 00:00 estimate when screenshots surround midnight", () => {
     const r = evaluateMemberDaily(
       [pt2("a", "2026-11-18T10:00:00Z", 0, 0), pt2("b", "2026-11-19T05:00:00Z", 60000, 0), pt2("c", "2026-11-20T01:00:00Z", 200000, 0)],
-      day, after, D, SS,
+      day, after, D, { ...SS, force_daily_verdict: true },
+    );
+    expect(["PASS", "FAIL"]).toContain(r.status);
+    expect(r.flags).toContain("estimated");
+  });
+
+  it("PENDING with an estimate when it cannot be decided (strict mode)", () => {
+    const r = evaluateMemberDaily(
+      [pt2("a", "2026-11-18T10:00:00Z", 0, 0), pt2("b", "2026-11-19T05:00:00Z", 60000, 0), pt2("c", "2026-11-20T01:00:00Z", 200000, 0)],
+      day, after, D, { ...SS, force_daily_verdict: false },
     );
     expect(r.status).toBe("PENDING");
     expect(r.reasons.join(" ")).toContain("Ước tính");

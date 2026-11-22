@@ -18,6 +18,11 @@ export interface GeneralSettings {
   baseline_tolerance_pct: number;
   /** Daily periods: a snapshot within this many minutes of 00:00 counts as taken at 00:00. */
   day_edge_tolerance_min: number;
+  /**
+   * When a finished day is not covered by screenshots near 00:00, still give a PASS/FAIL verdict
+   * using the best data available (estimate at 00:00, else the part of the day that was measured).
+   */
+  force_daily_verdict: boolean;
 }
 
 export const DEFAULT_SETTINGS: GeneralSettings = {
@@ -28,6 +33,7 @@ export const DEFAULT_SETTINGS: GeneralSettings = {
   timezone: "Asia/Ho_Chi_Minh",
   baseline_tolerance_pct: 15,
   day_edge_tolerance_min: 60,
+  force_daily_verdict: true,
 };
 
 // ---------- Requirement configuration ----------

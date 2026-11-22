@@ -22,6 +22,9 @@ export const FLAG_LABELS: Record<string, string> = {
   day_not_covered: "Thiếu ảnh gần 0 giờ để chốt kết quả ngày",
   upper_bound_fail: "Không đạt ngay cả khi tính rộng hơn cả ngày",
   early_pass: "Đã đạt trước khi đủ chu kỳ",
+  forced_verdict: "Kết quả chốt dù thiếu ảnh sát 0h",
+  estimated: "Dùng số ước tính tại 0h",
+  partial_day: "Chỉ tính phần ngày đo được",
 };
 
 type ResetSettings = Pick<GeneralSettings, "week_reset_weekday" | "week_reset_hour" | "timezone">;
@@ -399,20 +402,59 @@ export function evaluateMemberDaily(
     }
   }
 
-  // still undecided: show an interpolated estimate for information only
+  // still undecided: estimate the values at 00:00 from the speed between the surrounding screenshots
   const est: string[] = [];
   const startVal = (pick: (p: DataPoint) => number | null) =>
     coversStart && startAnchor ? pick(startAnchor) : before && inside[0] ? interpolate(before, inside[0], period.start, pick, settings) : null;
   const endVal = (pick: (p: DataPoint) => number | null) =>
     coversEnd && endAnchor ? pick(endAnchor) : after && inside.length ? interpolate(inside[inside.length - 1], after, period.end, pick, settings) : null;
-  for (const [label, pick] of [
-    ["KM", (p: DataPoint) => p.weekly_km],
-    ["Donate", (p: DataPoint) => p.donated],
+  const estimated: Record<"km" | "donate", number | null> = { km: null, donate: null };
+  for (const [key, label, pick] of [
+    ["km", "KM", (p: DataPoint) => p.weekly_km],
+    ["donate", "Donate", (p: DataPoint) => p.donated],
   ] as const) {
     const a = startVal(pick);
     const b = endVal(pick);
-    if (a !== null && b !== null && b >= a) est.push(`${label} ≈ ${fmt(b - a)}`);
+    if (a !== null && b !== null && b >= a) {
+      estimated[key] = Math.round(b - a);
+      est.push(`${label} ≈ ${fmt(b - a)}`);
+    }
   }
+
+  if (settings.force_daily_verdict ?? true) {
+    // the manager wants a verdict for every finished day: use the estimate at 00:00 when possible,
+    // otherwise the part of the day that was actually measured between screenshots
+    const pickGain = (key: "km" | "donate", low: Gain): { gain: Gain; how: "est" | "partial" | null } =>
+      estimated[key] !== null
+        ? { gain: { value: estimated[key], exact: true, flags: [] }, how: "est" }
+        : low.value !== null
+          ? { gain: { value: low.value, exact: true, flags: [] }, how: "partial" }
+          : { gain: { value: null, exact: false, flags: [] }, how: null };
+    const k = pickGain("km", lowKm);
+    const d = pickGain("donate", lowDon);
+    const forced = evaluateTree(tree, { km: k.gain, donate: d.gain }, 1);
+    if (forced.result !== null) {
+      const v = decide(forced, cfg);
+      const span =
+        lowChain && startAnchor && endAnchor
+          ? `đo được từ ${fmtClock(startAnchor.captured_at, settings)} đến ${fmtClock(endAnchor.captured_at, settings)}`
+          : "không có cặp ảnh trong ngày";
+      const how =
+        k.how === "est" || d.how === "est"
+          ? `Không có ảnh sát 0h — tính theo ước tính tại 0h từ tốc độ chạy giữa các ảnh (${span})`
+          : `Không có ảnh sát 0h — chỉ tính phần trong ngày ${span}`;
+      return {
+        ...base,
+        km: k.gain,
+        donate: d.gain,
+        status: v.status,
+        reason_summary: v.status === "PASS" ? "Đạt yêu cầu (ước tính)" : `${v.summary} (ước tính)`,
+        reasons: [...leafReasons(forced, k.how === "est" ? "≈" : "trong ngày"), how],
+        flags: [...flags, "forced_verdict", k.how === "est" || d.how === "est" ? "estimated" : "partial_day"],
+      };
+    }
+  }
+
   return {
     ...base,
     status: "PENDING",
@@ -424,6 +466,11 @@ export function evaluateMemberDaily(
     ],
     flags: [...flags, "day_not_covered"],
   };
+}
+
+function fmtClock(iso: string, s: Pick<GeneralSettings, "timezone">): string {
+  const p = localParts(new Date(iso).getTime(), s.timezone);
+  return `${String(p.hour).padStart(2, "0")}:${String(p.minute).padStart(2, "0")} ${String(p.day).padStart(2, "0")}/${String(p.month).padStart(2, "0")}`;
 }
 
 /** The daily period (local time, starting at `startHour`) that contains `ms`. */

@@ -21,6 +21,7 @@ const schema = z.object({
   }, "Múi giờ không hợp lệ"),
   baseline_tolerance_pct: z.number().min(0).max(50),
   day_edge_tolerance_min: z.number().int().min(0).max(240),
+  force_daily_verdict: z.boolean(),
 });
 
 export async function updateSettings(input: z.infer<typeof schema>) {
