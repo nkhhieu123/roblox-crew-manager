@@ -10,6 +10,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@ai-sdk/google": "^4.0.124",
     "@base-ui/react": "^1.9.0",
     "@supabase/supabase-js": "^2.119.2",
     "ai": "^7.0.179",

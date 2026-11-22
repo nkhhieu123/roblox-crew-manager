@@ -1,5 +1,6 @@
 import "server-only";
 import { generateText, Output } from "ai";
+import { google } from "@ai-sdk/google";
 import { z } from "zod";
 import { env } from "./env";
 import { cleanUsername, parseInteger, parseNumber } from "@/lib/engine/parse";
@@ -129,9 +130,10 @@ export function normalizeOcr(out: OcrOutput, model: string): OcrResult {
 }
 
 export async function runOcr(image: Uint8Array, mediaType: string): Promise<OcrResult> {
-  const model = env.ocrModel;
+  // Gemini API key (free tier) takes priority; otherwise go through Vercel AI Gateway
+  const model = env.geminiKey ? `google/${env.geminiModel}` : env.ocrModel;
   const { output } = await generateText({
-    model,
+    model: env.geminiKey ? google(env.geminiModel) : env.ocrModel,
     temperature: 0,
     maxRetries: 2,
     output: Output.object({ schema: ocrSchema }),

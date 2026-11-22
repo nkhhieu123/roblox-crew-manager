@@ -85,10 +85,8 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
                 <dd className="font-medium">{manager}</dd>
                 <dt className="text-muted-foreground">Quản lý</dt>
                 <dd>{managers.join(", ")}</dd>
-                <dt className="text-muted-foreground">OCR model</dt>
-                <dd className="font-mono text-xs">{env.ocrModel}</dd>
-                <dt className="text-muted-foreground">AI Gateway</dt>
-                <dd>{process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN ? "Đã cấu hình" : <span className="text-warning">Chưa có key</span>}</dd>
+                <dt className="text-muted-foreground">OCR</dt>
+                <dd className="font-mono text-xs">{env.ocrEngine}</dd>
                 <dt className="text-muted-foreground">Storage bucket</dt>
                 <dd className="font-mono text-xs">{env.storageBucket}</dd>
               </dl>

@@ -26,6 +26,17 @@ export const env = {
   get ocrModel() {
     return process.env.OCR_MODEL?.trim() || "anthropic/claude-sonnet-5.5";
   },
+  /** Direct Google Gemini (free tier, no credit card) — used instead of AI Gateway when the key is set. */
+  get geminiKey() {
+    return process.env.GOOGLE_GENERATIVE_AI_API_KEY?.trim() || null;
+  },
+  get geminiModel() {
+    return process.env.GEMINI_MODEL?.trim() || "gemini-3.5-flash";
+  },
+  /** Human-readable name of the OCR engine in use. */
+  get ocrEngine() {
+    return this.geminiKey ? `google/${this.geminiModel} (Gemini API)` : `${this.ocrModel} (AI Gateway)`;
+  },
   get managers(): { name: string; password: string }[] {
     const list: { name: string; password: string }[] = [];
     for (const i of [1, 2]) {

@@ -47,7 +47,7 @@ export async function POST(req: Request) {
     const message = e instanceof Error ? e.message : String(e);
     console.error("OCR failed", message);
     return NextResponse.json(
-      { error: `OCR thất bại: ${message}. Kiểm tra AI_GATEWAY_API_KEY / OCR_MODEL.`, image_path: imagePath },
+      { error: `OCR thất bại: ${message}. Kiểm tra GOOGLE_GENERATIVE_AI_API_KEY (Gemini) hoặc AI Gateway / OCR_MODEL.`, image_path: imagePath },
       { status: 502 },
     );
   }

@@ -63,6 +63,10 @@ Website quản lý thành viên Crew Roblox: tải ảnh chụp danh sách Membe
 
 ## 4. Cấu hình OCR (AI Vision)
 
+**Cách 1 — Google Gemini (miễn phí, không cần thẻ):** tạo key tại <https://aistudio.google.com/apikey>, thêm biến `GOOGLE_GENERATIVE_AI_API_KEY` (tùy chọn `GEMINI_MODEL`, mặc định `gemini-3.5-flash`). Khi có key này, web dùng Gemini.
+
+**Cách 2 — Vercel AI Gateway** (cần thêm thẻ vào tài khoản Vercel để mở credit miễn phí):
+
 OCR dùng **Vercel AI Gateway** qua AI SDK — đổi model chỉ bằng biến môi trường, không cần sửa code.
 
 - **Trên Vercel:** vào Dashboard → **AI Gateway** để bật; project trên Vercel tự xác thực bằng OIDC, không cần key.
