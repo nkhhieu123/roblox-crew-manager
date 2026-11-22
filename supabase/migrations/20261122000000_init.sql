@@ -143,7 +143,7 @@ create index if not exists evaluations_to_idx on evaluations (to_captured_at des
 create table if not exists evaluation_results (
   id                 uuid primary key default gen_random_uuid(),
   evaluation_id      uuid not null references evaluations(id) on delete cascade,
-  member_id          uuid references members(id) on delete cascade,
+  member_id          uuid references members(id) on delete set null,  -- keep history even if a member is deleted
   username           text not null,
   status             text not null check (status in ('PASS','FAIL','PENDING','WARNING','EXEMPT')),
   km_gain            numeric,
