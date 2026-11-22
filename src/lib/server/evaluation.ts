@@ -187,7 +187,16 @@ async function runDaily(
   for (const m of members) {
     const points = pointsByMember.get(m.id);
     if (!points || points.length === 0) continue;
-    if (m.left_at && new Date(m.left_at).getTime() <= period.start) continue; // already out of the crew
+    // who belongs to this day:
+    //  - left before the day started → no
+    //  - left during a day that is still running → no (already kicked, nothing to decide any more)
+    //  - joined after the day ended (first screenshot after it) → no
+    if (m.left_at) {
+      const leftMs = new Date(m.left_at).getTime();
+      if (leftMs <= period.start || (now < period.end && leftMs <= now)) continue;
+    }
+    const firstSeen = Math.min(...points.map((p) => new Date(p.captured_at).getTime()));
+    if (firstSeen > period.end) continue;
     const key = usernameKey(m.username);
     const r = evaluateMemberDaily(points, period, now, cfg, settings, {
       exempt: m.exempt || exemptKeys.has(key),
