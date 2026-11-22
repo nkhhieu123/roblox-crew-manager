@@ -24,7 +24,7 @@ export const env = {
     return s;
   },
   get ocrModel() {
-    return process.env.OCR_MODEL?.trim() || "google/gemini-2.5-flash";
+    return process.env.OCR_MODEL?.trim() || "anthropic/claude-sonnet-5.5";
   },
   get managers(): { name: string; password: string }[] {
     const list: { name: string; password: string }[] = [];
