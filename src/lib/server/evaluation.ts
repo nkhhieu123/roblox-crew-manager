@@ -412,41 +412,38 @@ async function saveEvaluation(a: {
 }): Promise<RunResult> {
   const versionId = await ensureVersion(a.set, a.actor);
 
-  // keep "handled" marks (resolved + note) from the runs being replaced, so re-evaluating never re-opens them
+  // keep "handled" marks (resolved + note) from earlier runs of this period, so re-evaluating never re-opens them.
+  // Look at the most recent runs whether or not they are still "current": an interrupted run must not make the
+  // marks disappear. For each member, the newest run that has a result for them decides (so un-marking sticks).
   const prevRuns = must(
     a.period.kind === "daily"
-      ? await db().from("evaluations").select("id").eq("superseded", false).eq("period_kind", "daily").lt("period_start", a.period.end).gt("period_end", a.period.start)
-      : await db().from("evaluations").select("id").eq("superseded", false).eq("period_kind", "rolling").eq("to_snapshot_id", a.snapshotId),
-    "Load runs to supersede",
-  ) as { id: string }[];
-  const handled = new Map<string, { resolved_at: string | null; resolved_by: string | null; resolution_note: string | null }>();
+      ? await db().from("evaluations").select("id, created_at").eq("period_kind", "daily").lt("period_start", a.period.end).gt("period_end", a.period.start).order("created_at", { ascending: false }).limit(20)
+      : await db().from("evaluations").select("id, created_at").eq("period_kind", "rolling").eq("to_snapshot_id", a.snapshotId).order("created_at", { ascending: false }).limit(20),
+    "Load earlier runs",
+  ) as { id: string; created_at: string }[];
+  type Mark = { member_id: string | null; evaluation_id: string; resolved: boolean; resolved_at: string | null; resolved_by: string | null; resolution_note: string | null };
+  const decided = new Map<string, Mark>();
   if (prevRuns.length) {
-    const rows = await fetchAll<{ member_id: string | null; resolved_at: string | null; resolved_by: string | null; resolution_note: string | null }>(
+    const rank = new Map(prevRuns.map((r, i) => [r.id, i]));
+    const rows = await fetchAll<Mark>(
       (x, y) =>
         db()
           .from("evaluation_results")
-          .select("member_id, resolved_at, resolved_by, resolution_note")
+          .select("member_id, evaluation_id, resolved, resolved_at, resolved_by, resolution_note")
           .in("evaluation_id", prevRuns.map((r) => r.id))
-          .eq("resolved", true)
           .order("id")
           .range(x, y),
       "Load handled violations",
     );
-    for (const r of rows) if (r.member_id) handled.set(r.member_id, r);
+    rows.sort((p, q) => (rank.get(p.evaluation_id) ?? 99) - (rank.get(q.evaluation_id) ?? 99));
+    for (const r of rows) if (r.member_id && !decided.has(r.member_id)) decided.set(r.member_id, r);
   }
   for (const r of a.results) {
-    const h = r.member_id ? handled.get(r.member_id) : undefined;
-    if (h && (r.status === "FAIL" || r.status === "WARNING")) Object.assign(r, { resolved: true, ...h });
+    const h = r.member_id ? decided.get(r.member_id) : undefined;
+    if (h?.resolved && (r.status === "FAIL" || r.status === "WARNING")) {
+      Object.assign(r, { resolved: true, resolved_at: h.resolved_at, resolved_by: h.resolved_by, resolution_note: h.resolution_note });
+    }
   }
-
-  // supersede previous runs for the same period / snapshot (they stay in history)
-  const sup = db().from("evaluations").update({ superseded: true }).eq("superseded", false);
-  must(
-    a.period.kind === "daily"
-      ? await sup.eq("period_kind", "daily").lt("period_start", a.period.end).gt("period_end", a.period.start)
-      : await sup.eq("period_kind", "rolling").eq("to_snapshot_id", a.snapshotId),
-    "Supersede old evaluations",
-  );
 
   const evaluation = must(
     await db()
@@ -482,6 +479,16 @@ async function saveEvaluation(a: {
     await db().from("evaluations").delete().eq("id", evaluation.id);
     throw e;
   }
+
+  // only now that the new run is complete, retire the previous runs for the same period / snapshot
+  // (they stay in history) — a failure above leaves the old results in place
+  const sup = db().from("evaluations").update({ superseded: true }).eq("superseded", false).neq("id", evaluation.id);
+  must(
+    a.period.kind === "daily"
+      ? await sup.eq("period_kind", "daily").lt("period_start", a.period.end).gt("period_end", a.period.start)
+      : await sup.eq("period_kind", "rolling").eq("to_snapshot_id", a.snapshotId),
+    "Supersede old evaluations",
+  );
 
   await audit(a.actor, "evaluation.run", "evaluation", evaluation.id, {
     trigger: a.trigger,
