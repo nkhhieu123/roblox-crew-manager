@@ -108,10 +108,20 @@ export interface PreviousValue {
 
 type Delta = { text: string; tone: "up" | "zero" | "warn" | "muted"; title?: string };
 
+/** Display names use fancy symbols that OCR reads inconsistently ("・ メ ・" / "・メ・"): compare without spaces. */
+function nameKey(n: string | null | undefined): string {
+  return (n ?? "").replace(/\s+/g, "").toLowerCase();
+}
+
+/** How many single-letter OCR slips we accept between two usernames of this length. */
+function typoBudget(len: number): number {
+  return len >= 8 ? 2 : len >= 5 ? 1 : 0;
+}
+
 /** Same person read twice from overlapping screenshots, with a username differing by a few characters? */
 function looksLikeSamePerson(a: DraftRow, b: OcrRowDto): boolean {
-  const da = a.display_name.trim().toLowerCase();
-  const db = (b.display_name ?? "").trim().toLowerCase();
+  const da = nameKey(a.display_name);
+  const db = nameKey(b.display_name);
   if (!da || da !== db) return false;
   if (b.weekly_km === null || b.donated === null) return false;
   if (str(a.weekly_km) !== str(b.weekly_km) || str(a.donated) !== str(b.donated)) return false;
@@ -128,7 +138,7 @@ export function UploadClient({
   previous,
   resetSettings,
 }: {
-  knownMembers: { username: string; display_name: string | null }[];
+  knownMembers: { username: string; display_name: string | null; left_at?: string | null }[];
   defaultDonateType: DonateType;
   storeImages: boolean;
   lastNextResetAt: string | null;
@@ -175,16 +185,25 @@ export function UploadClient({
    * OCR often misreads one or two letters of the tiny "@username" (a/o, v/y, i/j…). If the username is not a
    * known member but a known member has the SAME display name and a username at most 2 edits away, it is the
    * same person: use the known username.
+   * Display names are often fancy symbols that OCR reads differently each time, so also accept a single known
+   * member whose username is 1–2 letters away and who is NOT otherwise in this scan (otherwise the real member
+   * would look absent and be marked as "left").
    */
   const correctUsername = useCallback(
-    (username: string, displayName: string | null): string | null => {
+    (username: string, displayName: string | null, scanKeys: Set<string>): { username: string; why: string } | null => {
       const k = usernameKey(username);
-      if (!k || known.has(k) || !displayName?.trim()) return null;
-      const d = displayName.trim().toLowerCase();
-      const candidates = knownMembers.filter(
-        (m) => (m.display_name ?? "").trim().toLowerCase() === d && levenshtein(usernameKey(m.username), k) <= 2,
-      );
-      return candidates.length === 1 ? candidates[0].username : null;
+      if (!k || known.has(k)) return null;
+      const d = nameKey(displayName);
+      if (d) {
+        const same = knownMembers.filter((m) => nameKey(m.display_name) === d && levenshtein(usernameKey(m.username), k) <= 2);
+        if (same.length === 1) return { username: same[0].username, why: "cùng tên hiển thị" };
+      }
+      const near = knownMembers.filter((m) => {
+        const mk = usernameKey(m.username);
+        return !m.left_at && !scanKeys.has(mk) && levenshtein(mk, k) <= typoBudget(Math.min(mk.length, k.length));
+      });
+      if (near.length === 1) return { username: near[0].username, why: "chỉ khác 1–2 ký tự, người này không có ở chỗ khác trong ảnh" };
+      return null;
     },
     [known, knownMembers],
   );
@@ -249,9 +268,10 @@ export function UploadClient({
     });
   }
 
-  function mergeRows(incoming: OcrRowDto[], imageIndex: number) {
+  function mergeRows(incoming: OcrRowDto[], imageIndex: number, scanUsernames: (string | null)[]) {
     setRows((prev) => {
       const next = [...prev];
+      const scanKeys = new Set([...prev.map((x) => x.username), ...scanUsernames].filter(Boolean).map((u) => usernameKey(u!)));
       for (const r of incoming) {
         const key = r.username ? usernameKey(r.username) : "";
         const idx = key ? next.findIndex((x) => usernameKey(x.username) === key) : -1;
@@ -322,7 +342,8 @@ export function UploadClient({
           }
           continue;
         }
-        const corrected = r.username ? correctUsername(r.username, r.display_name) : null;
+        const fix = r.username ? correctUsername(r.username, r.display_name, scanKeys) : null;
+        const corrected = fix?.username ?? null;
         if (corrected) {
           const ci = next.findIndex((x) => usernameKey(x.username) === usernameKey(corrected));
           if (ci >= 0) continue; // already present under the correct username
@@ -338,7 +359,7 @@ export function UploadClient({
           last_seen_text: r.last_seen_text ?? "",
           needs_review: r.needs_review,
           verified: !r.needs_review,
-          review_notes: [r.review_notes, corrected ? `Tự sửa Username: AI đọc "${r.username}" → dùng "${corrected}" (cùng tên hiển thị)` : null]
+          review_notes: [r.review_notes, fix ? `Tự sửa Username: AI đọc "${r.username}" → dùng "${fix.username}" (${fix.why})` : null]
             .filter(Boolean)
             .join("; "),
           imageIndex,
@@ -370,10 +391,12 @@ export function UploadClient({
       if (!data.is_member_list) toast.warning("Ảnh có vẻ không phải danh sách Members — hãy kiểm tra kỹ.");
 
       // merge image by image, in upload order, so overlapping rows are detected
+      const scanUsernames = data.rows.map((r) => r.username);
       pending.forEach((item, k) => {
         mergeRows(
           data.rows.filter((r) => r.image_index === k),
           indexOf(item.id),
+          scanUsernames,
         );
       });
       if (data.member_total) setMemberTotal((prev) => Math.max(prev ?? 0, data.member_total!));
@@ -491,10 +514,16 @@ export function UploadClient({
   }, [rows, known, previous]);
 
   /** Only when the scan covers the whole crew ("Members 30 / 30" matches) can absent members be marked as left. */
-  const leftCandidates = useMemo(
-    () => (memberTotal !== null && memberTotal === stats.total && stats.unverified === 0 ? stats.missing : []),
-    [memberTotal, stats],
-  );
+  // never auto-mark someone as left when a "new" name in this scan is only a letter or two away from theirs:
+  // that is almost certainly the same person with a misread username
+  const leftCandidates = useMemo(() => {
+    if (memberTotal === null || memberTotal !== stats.total || stats.unverified !== 0) return [];
+    const newKeys = stats.newNames.map(usernameKey);
+    return stats.missing.filter((u) => {
+      const mk = usernameKey(u);
+      return !newKeys.some((nk) => levenshtein(nk, mk) <= Math.max(2, typoBudget(Math.min(nk.length, mk.length))));
+    });
+  }, [memberTotal, stats]);
 
   function save() {
     // validate numbers
