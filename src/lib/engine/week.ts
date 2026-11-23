@@ -113,6 +113,33 @@ export function resetBetween(
  * Parse an in-game countdown such as "2d 5h 30m", "6 days 04:12:33", "04:12:33",
  * "1 ngày 3 giờ 20 phút", "5D 12H". Returns seconds, or null when unreadable.
  */
+/**
+ * Precision (seconds) of an in-game countdown: "6d 23h" only says 6d23h ≤ remaining < 7d, "22h 44m" is exact to the
+ * minute, "05:12:33" to the second.
+ */
+export function countdownPrecision(input: string | null | undefined): number {
+  const s = (input ?? "").toLowerCase();
+  if (/\d{1,3}:\d{2}:\d{2}/.test(s) || /\d+\s*(?:seconds?|secs?|giây|s)(?![a-z])/.test(s)) return 1;
+  if (/\d{1,3}:\d{2}/.test(s) || /\d+\s*(?:minutes?|mins?|phút|m)(?![a-z])/.test(s)) return 60;
+  if (/\d+\s*(?:hours?|hrs?|giờ|tiếng|h)(?![a-z])/.test(s)) return 3600;
+  return 86400;
+}
+
+/**
+ * Countdowns are truncated ("6d 23h" at 15:06 means the reset is between 14:06 and 15:06). When the reset time set
+ * in Settings falls inside that window, use it — e.g. 15:00 instead of 14:06.
+ */
+export function snapNextReset(
+  rawMs: number,
+  countdownText: string | null | undefined,
+  s: Pick<GeneralSettings, "week_reset_weekday" | "week_reset_hour" | "timezone">,
+): number {
+  const slack = 5 * 60_000;
+  const windowEnd = rawMs + countdownPrecision(countdownText) * 1000 + slack;
+  const candidate = lastWeeklyReset(windowEnd, s);
+  return candidate >= rawMs - slack ? candidate : rawMs;
+}
+
 export function parseCountdown(input: string | null | undefined): number | null {
   if (!input) return null;
   let s = input.toLowerCase().replace(/resets?\s*(in)?|reset|còn lại|còn|in\b|:\s*$/g, " ").trim();

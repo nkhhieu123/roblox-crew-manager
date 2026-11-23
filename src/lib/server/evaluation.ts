@@ -189,12 +189,9 @@ async function runDaily(
     if (!points || points.length === 0) continue;
     // who belongs to this day:
     //  - left before the day started → no
-    //  - left during a day that is still running → no (already kicked, nothing to decide any more)
+    //  - left (kicked) during the day → no: they are out of the crew, nothing to decide for that day
     //  - joined after the day ended (first screenshot after it) → no
-    if (m.left_at) {
-      const leftMs = new Date(m.left_at).getTime();
-      if (leftMs <= period.start || (now < period.end && leftMs <= now)) continue;
-    }
+    if (m.left_at && new Date(m.left_at).getTime() <= Math.min(period.end, now)) continue;
     const firstSeen = Math.min(...points.map((p) => new Date(p.captured_at).getTime()));
     if (firstSeen > period.end) continue;
     const key = usernameKey(m.username);
@@ -471,7 +468,7 @@ async function saveEvaluation(a: {
   try {
     for (const part of chunk(a.results, 500)) {
       must(
-        await db().from("evaluation_results").insert(part.map((r) => ({ ...r, evaluation_id: evaluation.id }))),
+        await db().from("evaluation_results").insert(part.map((r) => ({ resolved: false, resolved_at: null, resolved_by: null, resolution_note: null, ...r, evaluation_id: evaluation.id }))),
         "Insert evaluation results",
       );
     }

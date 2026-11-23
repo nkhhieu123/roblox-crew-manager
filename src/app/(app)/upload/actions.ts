@@ -8,6 +8,8 @@ import { audit } from "@/lib/server/audit";
 import { runEvaluation } from "@/lib/server/evaluation";
 import { resolveViolationsOfLeftMembers } from "@/lib/server/left";
 import { cleanUsername, usernameKey } from "@/lib/engine/parse";
+import { snapNextReset } from "@/lib/engine/week";
+import { getSettings } from "@/lib/server/settings";
 
 const num = z.number().finite().nonnegative().nullable();
 
@@ -60,6 +62,8 @@ export async function saveSnapshot(input: SaveSnapshotInput): Promise<
   }
 
   if (p.next_reset_at) {
+    // countdowns are truncated: use the reset time from Settings when it fits the countdown window
+    p.next_reset_at = new Date(snapNextReset(new Date(p.next_reset_at).getTime(), p.reset_countdown_text, await getSettings())).toISOString();
     const diff = new Date(p.next_reset_at).getTime() - captured.getTime();
     if (diff <= 0 || diff > 7 * 86_400_000 + 3_600_000) {
       return { ok: false, error: "Mốc reset phải nằm trong vòng 7 ngày sau thời điểm snapshot." };

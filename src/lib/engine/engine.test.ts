@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseNumber, levenshtein } from "./parse";
-import { crossesWeeklyReset, lastWeeklyReset, parseCountdown, resetBetween } from "./week";
+import { crossesWeeklyReset, lastWeeklyReset, parseCountdown, resetBetween, snapNextReset } from "./week";
 import { dayPeriodAt, evaluateMember, evaluateMemberDaily } from "./evaluate";
 import { currentRaceWeek, weekContribution } from "./race";
 import { DEFAULT_REQUIREMENT, DEFAULT_SETTINGS, type DataPoint, type RequirementConfig } from "./types";
@@ -439,5 +439,22 @@ describe("daily periods (00:00 → 00:00 Vietnam time)", () => {
     );
     expect(r.status).toBe("PENDING");
     expect(r.reasons.join(" ")).toContain("Ước tính");
+  });
+});
+
+describe("snapNextReset", () => {
+  const s = { week_reset_weekday: 1, week_reset_hour: 15, timezone: "Asia/Ho_Chi_Minh" };
+  const at = (iso: string) => new Date(iso).getTime();
+  it("hour-only countdown snaps to the Settings reset (14:06 → 15:00 VN)", () => {
+    // captured Mon 23/11 15:06 VN, "Resets in 6d 23h" → raw 30/11 14:06 VN
+    const raw = at("2026-11-23T08:06:00Z") + (6 * 86400 + 23 * 3600) * 1000;
+    expect(new Date(snapNextReset(raw, "Resets in 6d 23h", s)).toISOString()).toBe("2026-11-30T08:00:00.000Z");
+  });
+  it("minute countdown a minute off snaps too", () => {
+    expect(new Date(snapNextReset(at("2026-11-23T07:59:00Z"), "Resets in 5h 1m", s)).toISOString()).toBe("2026-11-23T08:00:00.000Z");
+  });
+  it("keeps the countdown when Settings disagree", () => {
+    const raw = at("2026-11-30T02:00:00Z");
+    expect(snapNextReset(raw, "Resets in 6d 18h", s)).toBe(raw);
   });
 });

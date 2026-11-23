@@ -5,7 +5,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { db, must } from "@/lib/server/supabase";
 import { fetchAll } from "@/lib/server/fetch-all";
 import { getLatestEvaluation, type EvaluationRow, type ResultRow } from "@/lib/server/evaluation";
-import { fmtDateTime } from "@/lib/format";
+import { fmtDate, fmtDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { MembersTable, type MemberListRow } from "./members-table";
 import { ReevaluateButton } from "@/components/app/reevaluate-button";
@@ -122,21 +122,43 @@ export default async function MembersPage({ searchParams }: { searchParams: Prom
       ? fetchAll<ResultRow>((a, b) => db().from("evaluation_results").select("*").eq("evaluation_id", latest.id).order("id").range(a, b), "Load results")
       : Promise.resolve([] as ResultRow[]),
     // finished days of this week → number of days passed / failed per member
+    // (a day belongs to the race week in which it ENDS: the day of the weekly reset counts for the new week)
     fetchAll<{ member_id: string; status: string }>(
       (a, b) =>
         db()
           .from("evaluation_results")
-          .select("member_id, status, evaluations!inner(superseded, period_kind, is_final, period_start)")
+          .select("member_id, status, evaluations!inner(superseded, period_kind, is_final, period_end)")
           .eq("evaluations.superseded", false)
           .eq("evaluations.period_kind", "daily")
           .eq("evaluations.is_final", true)
-          .gte("evaluations.period_start", startIso)
-          .lt("evaluations.period_start", endIso)
+          .gt("evaluations.period_end", startIso)
+          .lte("evaluations.period_end", endIso)
           .order("id")
           .range(a, b),
       "Load daily results",
     ),
   ]);
+  // the last finished (closed) day: PASS / FAIL / WARNING filters show who passed / failed that day
+  const lastDay = must(
+    await db()
+      .from("evaluations")
+      .select("*")
+      .eq("superseded", false)
+      .eq("period_kind", "daily")
+      .eq("is_final", true)
+      .lte("period_end", isCurrent ? new Date(now).toISOString() : endIso)
+      .order("period_end", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    "Load last finished day",
+  ) as EvaluationRow | null;
+  const lastDayResults =
+    lastDay && lastDay.id !== latest?.id
+      ? await fetchAll<ResultRow>((a, b) => db().from("evaluation_results").select("*").eq("evaluation_id", lastDay.id).order("id").range(a, b), "Load last day results")
+      : results;
+  const dayBy = new Map(lastDayResults.map((r) => [r.member_id, r]));
+  const num = (v: unknown) => (v === null || v === undefined ? null : Number(v));
+
   const days = new Map<string, { pass: number; fail: number }>();
   for (const d of dayResults) {
     const cur = days.get(d.member_id) ?? { pass: 0, fail: 0 };
@@ -151,6 +173,7 @@ export default async function MembersPage({ searchParams }: { searchParams: Prom
 
   const rows: MemberListRow[] = members.map((m) => {
     const r = byMember.get(m.id);
+    const d = dayBy.get(m.id);
     const c = contributionBy.get(m.id);
     // for a past week, a member without any screenshot in that week has no data for it
     const absentPastWeek = !isCurrent && (!c || c.newWeekNoData);
@@ -182,6 +205,16 @@ export default async function MembersPage({ searchParams }: { searchParams: Prom
       new_week_no_data: isCurrent && (c?.newWeekNoData ?? false),
       days_pass: days.get(m.id)?.pass ?? 0,
       days_fail: days.get(m.id)?.fail ?? 0,
+      day: d
+        ? {
+            status: d.status,
+            km_gain: num(d.km_gain),
+            km_exact: d.km_gain_exact ?? null,
+            donate_gain: num(d.donate_gain),
+            donate_exact: d.donate_gain_exact ?? null,
+            reason: d.reason_summary ?? null,
+          }
+        : null,
     };
   });
 
@@ -229,7 +262,12 @@ export default async function MembersPage({ searchParams }: { searchParams: Prom
             : `${members.length} thành viên · ${isCurrent ? "Chưa có lần đánh giá nào" : "Tuần này không có lần đánh giá nào"}`
         }
       />
-      <MembersTable rows={rows} pastWeek={!isCurrent} />
+      <MembersTable
+        rows={rows}
+        pastWeek={!isCurrent}
+        dayLabel={lastDay?.period_start ? fmtDate(lastDay.period_start) : null}
+        todayLabel={latest?.period_kind === "daily" && latest.period_start && !latest.is_final ? fmtDate(latest.period_start) : null}
+      />
     </>
   );
 }

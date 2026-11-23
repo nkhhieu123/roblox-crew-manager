@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { ArrowDownUp, NotebookPen, ShieldOff } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -43,7 +43,21 @@ export interface MemberListRow {
   /** finished days in the selected week */
   days_pass: number;
   days_fail: number;
+  /** result of the last finished (closed) day */
+  day: DayView | null;
 }
+
+interface DayView {
+  status: Status | null;
+  km_gain: number | null;
+  km_exact: boolean | null;
+  donate_gain: number | null;
+  donate_exact: boolean | null;
+  reason: string | null;
+}
+
+/** PASS / FAIL / WARNING list the last finished day; the other tabs show today (the running day). */
+const DAY_FILTERS = new Set<string>(["PASS", "FAIL", "WARNING"]);
 
 type SortKey = "username" | "km" | "donate" | "violations" | "last" | "level" | "cur_km" | "cur_donated";
 const FILTERS = ["ALL", "PASS", "FAIL", "WARNING", "PENDING", "EXEMPT", "NO_DATA", "LEFT"] as const;
@@ -71,7 +85,17 @@ function Th({
   );
 }
 
-export function MembersTable({ rows, pastWeek = false }: { rows: MemberListRow[]; pastWeek?: boolean }) {
+export function MembersTable({
+  rows,
+  pastWeek = false,
+  dayLabel = null,
+  todayLabel = null,
+}: {
+  rows: MemberListRow[];
+  pastWeek?: boolean;
+  dayLabel?: string | null;
+  todayLabel?: string | null;
+}) {
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>("ALL");
   const [sort, setSort] = useState<SortKey>("km");
@@ -81,11 +105,21 @@ export function MembersTable({ rows, pastWeek = false }: { rows: MemberListRow[]
     const active = rows.filter((r) => !r.left_at);
     const c: Record<string, number> = { ALL: active.length, NO_DATA: 0, LEFT: rows.length - active.length };
     for (const r of active) {
-      if (r.status) c[r.status] = (c[r.status] ?? 0) + 1;
+      if (r.status && !DAY_FILTERS.has(r.status)) c[r.status] = (c[r.status] ?? 0) + 1;
+      if (r.day?.status && DAY_FILTERS.has(r.day.status)) c[r.day.status] = (c[r.day.status] ?? 0) + 1;
       if (r.no_new_data || !r.status) c.NO_DATA++;
     }
     return c;
   }, [rows]);
+
+  const dayMode = DAY_FILTERS.has(filter);
+  const view = useCallback(
+    (r: MemberListRow): DayView =>
+      dayMode
+        ? (r.day ?? { status: null, km_gain: null, km_exact: null, donate_gain: null, donate_exact: null, reason: null })
+        : { status: r.status, km_gain: r.km_gain, km_exact: r.km_exact, donate_gain: r.donate_gain, donate_exact: r.donate_exact, reason: r.reason },
+    [dayMode],
+  );
 
   const list = useMemo(() => {
     const k = q.trim().toLowerCase();
@@ -95,6 +129,7 @@ export function MembersTable({ rows, pastWeek = false }: { rows: MemberListRow[]
       if (r.left_at) return false; // members who left are only listed under "Đã rời crew"
       if (filter === "ALL") return true;
       if (filter === "NO_DATA") return r.no_new_data || !r.status;
+      if (DAY_FILTERS.has(filter)) return r.day?.status === filter;
       return r.status === filter;
     });
     const val = (r: MemberListRow): number | string => {
@@ -102,9 +137,9 @@ export function MembersTable({ rows, pastWeek = false }: { rows: MemberListRow[]
         case "username":
           return r.username.toLowerCase();
         case "km":
-          return r.km_gain ?? -Infinity;
+          return view(r).km_gain ?? -Infinity;
         case "donate":
-          return r.donate_gain ?? -Infinity;
+          return view(r).donate_gain ?? -Infinity;
         case "violations":
           return r.violations;
         case "cur_km":
@@ -122,7 +157,7 @@ export function MembersTable({ rows, pastWeek = false }: { rows: MemberListRow[]
       const vb = val(b);
       return (va < vb ? -1 : va > vb ? 1 : 0) * dir;
     });
-  }, [rows, q, filter, sort, dir]);
+  }, [rows, q, filter, sort, dir, view]);
 
   function toggleSort(k: SortKey) {
     if (sort === k) setDir((d) => (d === 1 ? -1 : 1));
@@ -169,6 +204,14 @@ export function MembersTable({ rows, pastWeek = false }: { rows: MemberListRow[]
         </NativeSelect>
       </div>
 
+      {!pastWeek && (dayMode ? dayLabel : todayLabel) && (
+        <p className="text-xs text-muted-foreground">
+          {dayMode
+            ? `Đang xem kết quả ngày ${dayLabel} (đã chốt) — cột KM tăng / Donate tăng / Trạng thái là của ngày đó.`
+            : `Đang xem ngày hôm nay ${todayLabel} (đang diễn ra). Bấm PASS / FAIL / WARNING để xem kết quả ngày ${dayLabel ?? "trước"}.`}
+        </p>
+      )}
+
       <Card className="overflow-hidden p-0">
         <div className="overflow-x-auto">
           <table className="w-full min-w-[1200px] text-sm">
@@ -188,7 +231,9 @@ export function MembersTable({ rows, pastWeek = false }: { rows: MemberListRow[]
               </tr>
             </thead>
             <tbody>
-              {list.map((r) => (
+              {list.map((r) => {
+                const v = view(r);
+                return (
                 <tr key={r.id} className="border-t hover:bg-muted/20">
                   <td className="px-4 py-2.5">
                     <Link href={`/members/${encodeURIComponent(r.username)}`} className="group block">
@@ -210,12 +255,12 @@ export function MembersTable({ rows, pastWeek = false }: { rows: MemberListRow[]
                   <td className="px-4 py-2.5 text-right tabular font-medium" title="Số Donated đọc từ ảnh mới nhất">
                     {fmtNum(r.donated_total)}
                   </td>
-                  <td className="px-4 py-2.5 text-right tabular">{r.status ? fmtGain(r.km_gain, r.km_exact) : "—"}</td>
-                  <td className="px-4 py-2.5 text-right tabular">{r.status ? fmtGain(r.donate_gain, r.donate_exact) : "—"}</td>
+                  <td className="px-4 py-2.5 text-right tabular">{v.status ? fmtGain(v.km_gain, v.km_exact) : "—"}</td>
+                  <td className="px-4 py-2.5 text-right tabular">{v.status ? fmtGain(v.donate_gain, v.donate_exact) : "—"}</td>
                   <td className="px-4 py-2.5">
                     <div className="flex flex-col gap-0.5">
-                      <StatusBadge status={r.status} className="w-fit" />
-                      {r.reason && r.status !== "PASS" && <span className="text-[11px] text-muted-foreground">{r.reason}</span>}
+                      <StatusBadge status={v.status} className="w-fit" />
+                      {v.reason && v.status !== "PASS" && <span className="text-[11px] text-muted-foreground">{v.reason}</span>}
                     </div>
                   </td>
                   <td className="px-4 py-2.5 text-right tabular text-xs">
@@ -238,7 +283,8 @@ export function MembersTable({ rows, pastWeek = false }: { rows: MemberListRow[]
                     <div className="text-muted-foreground">Snapshot: {timeAgo(r.last_snapshot_at)}</div>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
               {list.length === 0 && (
                 <tr>
                   <td colSpan={11} className="px-4 py-12 text-center text-muted-foreground">

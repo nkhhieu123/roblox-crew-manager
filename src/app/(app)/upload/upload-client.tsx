@@ -14,7 +14,7 @@ import { NativeSelect } from "@/components/app/native-select";
 import { cn } from "@/lib/utils";
 import { levenshtein, parseInteger, parseNumber, usernameKey } from "@/lib/engine/parse";
 import { fmtDateTime, toLocalInput } from "@/lib/format";
-import { parseCountdown, resetBetween, WEEK_MS } from "@/lib/engine/week";
+import { parseCountdown, resetBetween, snapNextReset, WEEK_MS } from "@/lib/engine/week";
 import type { DonateType, GeneralSettings } from "@/lib/engine/types";
 import { saveSnapshot, type SaveSnapshotInput } from "./actions";
 
@@ -164,8 +164,8 @@ export function UploadClient({
   const nextReset = useMemo(() => {
     const cap = new Date(capturedAt);
     if (countdownSecs === null || Number.isNaN(cap.getTime())) return null;
-    return new Date(cap.getTime() + countdownSecs * 1000);
-  }, [capturedAt, countdownSecs]);
+    return new Date(snapNextReset(cap.getTime() + countdownSecs * 1000, countdownText, resetSettings));
+  }, [capturedAt, countdownSecs, countdownText, resetSettings]);
   // consistency with the reset time read on earlier screenshots (should differ by whole weeks only)
   const resetMismatchMin = useMemo(() => {
     if (!nextReset || !lastNextResetAt) return null;
