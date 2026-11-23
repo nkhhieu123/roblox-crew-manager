@@ -8,6 +8,7 @@ import { getLatestEvaluation, type EvaluationRow, type ResultRow } from "@/lib/s
 import { fmtDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { MembersTable, type MemberListRow } from "./members-table";
+import { ReevaluateButton } from "@/components/app/reevaluate-button";
 import { getSettings } from "@/lib/server/settings";
 import { currentRaceWeek, weekContribution, type ContributionPoint } from "@/lib/engine/race";
 import { WEEK_MS } from "@/lib/engine/week";
@@ -191,7 +192,8 @@ export default async function MembersPage({ searchParams }: { searchParams: Prom
       <PageHeader
         title="Members"
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {isCurrent && <ReevaluateButton />}
             <Link
               href={`/members?week=${back + 1}`}
               aria-disabled={back >= maxBack}

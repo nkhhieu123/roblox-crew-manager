@@ -102,7 +102,12 @@ export async function saveSnapshot(input: SaveSnapshotInput): Promise<
 
   let evaluation = "";
   try {
-    const r = await runEvaluation({ snapshotId, actor: manager, trigger: "auto" });
+    // retry once: a transient failure (e.g. during a deployment) must not leave the day un-evaluated
+    const r = await runEvaluation({ snapshotId, actor: manager, trigger: "auto" }).catch(async (e) => {
+      console.error("auto evaluation failed, retrying", e);
+      await new Promise((res) => setTimeout(res, 1500));
+      return runEvaluation({ snapshotId, actor: manager, trigger: "auto" });
+    });
     evaluation = r.ok
       ? `Đã đánh giá: ${r.summary.PASS} PASS · ${r.summary.FAIL} FAIL · ${r.summary.WARNING} WARNING · ${r.summary.PENDING} PENDING`
       : r.reason;
