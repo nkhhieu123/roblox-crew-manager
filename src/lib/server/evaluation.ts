@@ -29,6 +29,7 @@ interface MemberRow {
   username: string;
   exempt: boolean;
   left_at: string | null;
+  first_seen_at?: string | null;
 }
 
 export interface EvaluationSummary {
@@ -131,6 +132,32 @@ async function previousCounts(prevId: string | null) {
   return prevCounts;
 }
 
+/**
+ * A member seen for the first time today joined the crew after the previous screenshot (they were not on it).
+ * The in-game counters only count what they did for this crew, so everything shown on their first screenshot was
+ * earned after joining: add a 0 point at the previous screenshot so it counts for today. Only when that previous
+ * screenshot is in (or right before) this day — otherwise they may have joined, and played, on an earlier day.
+ */
+function withJoinPoint(points: DataPoint[], m: MemberRow, firstSeen: number, snapshots: SnapshotRow[], period: Period, settings: Settings): DataPoint[] {
+  if (!m.first_seen_at || Math.abs(new Date(m.first_seen_at).getTime() - firstSeen) > 1000) return points;
+  if (firstSeen < period.start || firstSeen > period.end) return points;
+  const tol = (settings.day_edge_tolerance_min ?? 60) * 60_000;
+  const prevSnap = [...snapshots].reverse().find((x) => new Date(x.captured_at).getTime() < firstSeen);
+  if (!prevSnap || new Date(prevSnap.captured_at).getTime() < period.start - tol) return points;
+  const first = points.find((p) => new Date(p.captured_at).getTime() === firstSeen) ?? points[0];
+  return [
+    {
+      snapshot_id: prevSnap.id,
+      captured_at: prevSnap.captured_at,
+      weekly_km: 0,
+      donated: first.donated === null ? null : 0,
+      donate_type: first.donate_type,
+      next_reset_at: prevSnap.next_reset_at,
+    },
+    ...points,
+  ];
+}
+
 /** Evaluate one calendar-day period (00:00 -> 00:00) for every member. */
 async function runDaily(
   set: ActiveSet,
@@ -159,7 +186,7 @@ async function runDaily(
   if (!anyInside || relevant.length === 0) return { ok: false, reason: "Không có ảnh nào trong ngày này." };
 
   const members = await fetchAll<MemberRow>(
-    (a, b) => db().from("members").select("id, username, exempt, left_at").order("id").range(a, b),
+    (a, b) => db().from("members").select("id, username, exempt, left_at, first_seen_at").order("id").range(a, b),
     "Load members",
   );
   const startIso = new Date(period.start).toISOString();
@@ -195,7 +222,7 @@ async function runDaily(
     const firstSeen = Math.min(...points.map((p) => new Date(p.captured_at).getTime()));
     if (firstSeen > period.end) continue;
     const key = usernameKey(m.username);
-    const r = evaluateMemberDaily(points, period, now, cfg, settings, {
+    const r = evaluateMemberDaily(withJoinPoint(points, m, firstSeen, snapshots, period, settings), period, now, cfg, settings, {
       exempt: m.exempt || exemptKeys.has(key),
       inScope: cfg.applies_to_all || includedKeys.has(key),
     });
